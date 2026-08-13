@@ -1,0 +1,7 @@
+.env
+db/
+doc_metadata.db
+gaps.json
+documents/
+__pycache__/
+.venv*/

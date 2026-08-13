@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InstiAssistant AI - Knowledge Base</title>
+    <!-- Google Fonts & FontAwesome -->
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --bg-dark: #0b0f17;
+            --bg-card: #151c2c;
+            --bg-sidebar: #0f1523;
+            --border-color: #232d42;
+            --border-hover: #3b82f6;
+            --primary: #3b82f6;
+            --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            --primary-hover: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --user-msg-bg: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+            --ai-msg-bg: #1e293b;
+            --danger: #ef4444;
+            --success: #10b981;
+            --shadow-glow: 0 0 25px rgba(59, 130, 246, 0.25);
+            --radius-pill: 9999px;
+            --radius-card: 20px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+        body { background-color: var(--bg-dark); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Sidebar Styling */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 18px;
+            z-index: 100;
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            font-size: 1.25rem;
+            font-weight: 800;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 36px;
+            padding-left: 8px;
+        }
+
+        .brand-icon {
+            width: 42px;
+            height: 42px;
+            background: var(--primary-gradient);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.2rem;
+            box-shadow: var(--shadow-glow);
+            -webkit-text-fill-color: initial;
+            animation: pulseGlow 4s infinite alternate;
+        }
+
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+            100% { box-shadow: 0 0 30px rgba(139, 92, 246, 0.6); }
+        }
+
+        .nav-links { display: flex; flex-direction: column; gap: 12px; flex: 1; }
+
+        .nav-btn {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 20px;
+            border-radius: var(--radius-pill);
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-align: left;
+        }
+
+        .nav-btn:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            border-color: var(--border-color);
+            transform: translateX(4px);
+        }
+
+        .nav-btn.active {
+            background: var(--primary-gradient);
+            color: white;
+            box-shadow: var(--shadow-glow);
+            border-color: transparent;
+        }
+
+        /* Main Workspace */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-dark);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .top-bar {
+            height: 72px;
+            background: rgba(15, 21, 35, 0.8);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 32px;
+            z-index: 10;
+        }
+
+        .mobile-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.4rem;
+            color: var(--text-main);
+            cursor: pointer;
+            margin-right: 16px;
+        }
+
+        .page-title { font-size: 1.15rem; font-weight: 700; color: var(--text-main); }
+
+        .btn-curvy {
+            padding: 10px 22px;
+            border-radius: var(--radius-pill);
+            border: none;
+            font-size: 0.88rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary-gradient);
+            color: white;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
+        }
+
+        .view-section { display: none; height: calc(100vh - 72px); flex-direction: column; }
+        .view-section.active { display: flex; animation: fadeIn 0.4s ease; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Hero Header View */
+        .hero-welcome {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px 20px 20px;
+            text-align: center;
+            animation: heroScale 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes heroScale {
+            from { opacity: 0; transform: scale(0.92); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .hero-logo-badge {
+            width: 72px;
+            height: 72px;
+            background: var(--primary-gradient);
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 2.2rem;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow-glow);
+            animation: floatLogo 3.5s ease-in-out infinite;
+        }
+
+        @keyframes floatLogo {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-8px); }
+        }
+
+        .hero-title {
+            font-size: 2.4rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 12px;
+        }
+
+        .hero-subtitle {
+            font-size: 1.05rem;
+            color: var(--text-muted);
+            max-width: 580px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+
+        .prompt-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            justify-content: center;
+            max-width: 780px;
+            margin-bottom: 20px;
+        }
+
+        .chip-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            padding: 14px 22px;
+            border-radius: var(--radius-pill);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-main);
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chip-card:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-glow);
+            background: #1e293b;
+        }
+
+        /* Chat Container */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 18%;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            scroll-behavior: smooth;
+        }
+
+        .message-row { display: flex; flex-direction: column; max-width: 85%; animation: msgSlide 0.35s ease; }
+        .message-row.user { align-self: flex-end; }
+        .message-row.assistant { align-self: flex-start; }
+
+        @keyframes msgSlide {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .bubble {
+            padding: 20px 26px;
+            border-radius: 24px;
+            font-size: 0.98rem;
+            line-height: 1.7;
+            position: relative;
+        }
+
+        .user .bubble {
+            background: var(--user-msg-bg);
+            color: white;
+            border-bottom-right-radius: 4px;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .assistant .bubble {
+            background: var(--ai-msg-bg);
+            color: var(--text-main);
+            border-bottom-left-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+        /* Collapsible References */
+        .ref-toggle-btn {
+            margin-top: 12px;
+            align-self: flex-start;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--primary);
+            padding: 8px 18px;
+            border-radius: var(--radius-pill);
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.25s ease;
+        }
+
+        .ref-toggle-btn:hover { border-color: var(--primary); transform: translateY(-2px); box-shadow: var(--shadow-glow); }
+
+        .ref-drawer {
+            display: none;
+            margin-top: 12px;
+            padding: 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-card);
+            font-size: 0.88rem;
+            color: var(--text-muted);
+            flex-direction: column;
+            gap: 12px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .ref-item { padding-bottom: 10px; border-bottom: 1px dashed var(--border-color); }
+        .ref-item:last-child { border-bottom: none; padding-bottom: 0; }
+
+        /* Floating Input Bar */
+        .input-wrapper {
+            padding: 20px 18% 32px 18%;
+            background: transparent;
+        }
+
+        .input-bar {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-pill);
+            padding: 10px 14px 10px 24px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .input-bar:focus-within {
+            border-color: var(--primary);
+            box-shadow: var(--shadow-glow), 0 0 0 2px rgba(59, 130, 246, 0.2);
+            transform: translateY(-3px);
+        }
+
+        .input-bar input {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 1.02rem;
+            background: transparent;
+            color: var(--text-main);
+        }
+
+        .btn-send {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--primary-gradient);
+            color: white;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1.1rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: var(--shadow-glow);
+        }
+
+        .btn-send:hover {
+            transform: scale(1.1) rotate(-10deg);
+            background: var(--primary-hover);
+        }
+
+        /* Admin Panels Styling */
+        .admin-padding { padding: 36px 12%; overflow-y: auto; }
+
+        .admin-nav {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 28px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 16px;
+        }
+
+        .admin-nav-btn {
+            padding: 10px 20px;
+            border-radius: var(--radius-pill);
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .admin-nav-btn.active, .admin-nav-btn:hover {
+            background: var(--primary-gradient);
+            color: white;
+            border-color: transparent;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-card);
+            padding: 28px;
+            margin-bottom: 28px;
+        }
+
+        .card-header {
+            font-size: 1.15rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.95rem; }
+        .table th, .table td { padding: 16px; border-bottom: 1px solid var(--border-color); }
+        .table th { background: #0f1523; color: var(--text-muted); font-weight: 700; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.05em; }
+
+        .btn-action {
+            padding: 8px 16px;
+            border-radius: var(--radius-pill);
+            border: none;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+        .btn-view { background: rgba(59, 130, 246, 0.15); color: var(--primary); }
+        .btn-view:hover { background: var(--primary); color: white; transform: translateY(-2px); }
+        .btn-delete { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
+        .btn-delete:hover { background: var(--danger); color: white; transform: translateY(-2px); }
+        .btn-resolve { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+        .btn-resolve:hover { background: var(--success); color: white; transform: translateY(-2px); }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(11, 15, 23, 0.8);
+            backdrop-filter: blur(8px);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-body {
+            background: var(--bg-card);
+            width: 85%; height: 88%;
+            border-radius: var(--radius-card);
+            display: flex; flex-direction: column;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            padding: 20px 28px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex; justify-content: space-between; align-items: center;
+            font-weight: 700;
+        }
+
+        iframe { width: 100%; height: 100%; border: none; }
+
+        /* Mobile Breakpoints */
+        @media (max-width: 992px) {
+            .chat-container, .input-wrapper { padding-left: 6%; padding-right: 6%; }
+            .admin-padding { padding: 24px 6%; }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { position: fixed; left: -280px; top: 0; bottom: 0; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
+            .sidebar.open { left: 0; }
+            .mobile-toggle { display: block; }
+            .hero-title { font-size: 1.8rem; }
+            .message-row { max-width: 95%; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar Navigation -->
+    <div class="sidebar" id="sidebar">
+        <div class="brand">
+            <div class="brand-icon"><i class="fa-solid fa-brain"></i></div>
+            <span>InstiAssistant</span>
+        </div>
+        <div class="nav-links">
+            <button class="nav-btn active" onclick="switchView('chat', this)">
+                <i class="fa-regular fa-comments"></i> Student Assistant
+            </button>
+            <button class="nav-btn" onclick="switchView('admin', this)">
+                <i class="fa-solid fa-shield-halved"></i> Admin Panel
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Content Workspace -->
+    <div class="main-content">
+        <!-- Top App Bar -->
+        <div class="top-bar">
+            <div style="display: flex; align-items: center;">
+                <button class="mobile-toggle" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
+                <div class="page-title" id="top-title">Student Assistant Workspace</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;" id="session-id-display"></span>
+                <button class="btn-curvy btn-primary" onclick="startNewChat()">
+                    <i class="fa-solid fa-plus"></i> New Chat
+                </button>
+            </div>
+        </div>
+
+        <!-- 1. STUDENT CHAT VIEW -->
+        <div id="view-chat" class="view-section active">
+            <div class="chat-container" id="chat-box">
+                <div class="hero-welcome" id="hero-welcome">
+                    <div class="hero-logo-badge">
+                        <i class="fa-solid fa-sparkles"></i>
+                    </div>
+                    <div class="hero-title">Hello, I'm InstiAssistant</div>
+                    <div class="hero-subtitle">Your official AI academic partner. Ask me about course syllabi, examination guidelines, grading schemes, or college rules.</div>
+
+                    <div class="prompt-chips">
+                        <div class="chip-card" onclick="quickPrompt('What are the key course subjects and topics?')">
+                            <i class="fa-solid fa-book-bookmark" style="color: #3b82f6;"></i> Course Subjects
+                        </div>
+                        <div class="chip-card" onclick="quickPrompt('What is the examination and evaluation policy?')">
+                            <i class="fa-solid fa-file-pen" style="color: #8b5cf6;"></i> Exam Policies
+                        </div>
+                        <div class="chip-card" onclick="quickPrompt('Summarize overall institutional rules.')">
+                            <i class="fa-solid fa-gavel" style="color: #10b981;"></i> College Rules
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Floating Input Bar -->
+            <div class="input-wrapper">
+                <div class="input-bar">
+                    <input type="text" id="user-input" placeholder="Ask anything about your syllabus or guidelines..." onkeydown="if(event.key==='Enter') sendQuery()">
+                    <button class="btn-send" onclick="sendQuery()"><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. UNIFIED ADMIN PANEL VIEW -->
+        <div id="view-admin" class="view-section admin-padding">
+            <div class="admin-nav">
+                <button class="admin-nav-btn active" id="tab-btn-docs" onclick="switchAdminTab('docs')">
+                    <i class="fa-regular fa-folder-open"></i> Document Management
+                </button>
+                <button class="admin-nav-btn" id="tab-btn-gaps" onclick="switchAdminTab('gaps')">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Knowledge Gaps
+                </button>
+            </div>
+
+            <!-- Admin Sub-View A: File Management -->
+            <div id="admin-sub-docs">
+                <div class="card">
+                    <div class="card-header">
+                        <span><i class="fa-solid fa-cloud-arrow-up" style="color: var(--primary);"></i> Upload New Syllabus / Circular (PDF)</span>
+                    </div>
+                    <div style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
+                        <input type="file" id="file-upload" accept=".pdf" style="font-size: 0.9rem; padding: 8px; color: var(--text-muted);">
+                        <button class="btn-curvy btn-primary" onclick="uploadFile()">
+                            <i class="fa-solid fa-upload"></i> Upload & Index
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span>Currently Indexed Documents</span>
+                    </div>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Filename</th>
+                                <th>Upload Date</th>
+                                <th>Size</th>
+                                <th>Chunks</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="doc-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Admin Sub-View B: Knowledge Gaps -->
+            <div id="admin-sub-gaps" style="display: none;">
+                <div class="card">
+                    <div class="card-header">
+                        <span><i class="fa-solid fa-chart-line" style="color: var(--primary);"></i> Unanswered Student Questions (Knowledge Gaps)</span>
+                    </div>
+                    <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 20px;">
+                        Questions where the assistant replied "I don't know" due to missing circulars or syllabi.
+                    </p>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Question</th>
+                                <th>Logged Timestamp</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gaps-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Viewer Modal -->
+    <div class="modal" id="pdf-modal">
+        <div class="modal-body">
+            <div class="modal-header">
+                <span id="modal-filename">Document Viewer</span>
+                <button onclick="closeModal()" style="border:none; background:none; color:var(--text-main); cursor:pointer; font-size:1.4rem;"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <iframe id="pdf-frame" src=""></iframe>
+        </div>
+    </div>
+
+    <script>
+        const ADMIN_PASSWORD = "admin123";
+        let isAdminAuthenticated = false;
+
+        let sessionId = localStorage.getItem("insti_session_id");
+        if (!sessionId) {
+            sessionId = "session_" + Math.random().toString(36).substring(2, 9);
+            localStorage.setItem("insti_session_id", sessionId);
+        }
+        document.getElementById("session-id-display").innerText = "Session: " + sessionId;
+
+        // Auto load past messages & focus input text field
+        loadChatHistory();
+        focusInputField();
+
+        function toggleSidebar() {
+            document.getElementById("sidebar").classList.toggle("open");
+        }
+
+        function focusInputField() {
+            setTimeout(() => {
+                const input = document.getElementById("user-input");
+                if (input) input.focus();
+            }, 300);
+        }
+
+        function switchView(viewName, btn) {
+            if (viewName === 'admin' && !isAdminAuthenticated) {
+                const inputPass = prompt("🔐 Admin Access Required.\nPlease enter the administrator passcode:");
+                if (inputPass === ADMIN_PASSWORD) {
+                    isAdminAuthenticated = true;
+                    alert("Access granted! Welcome to the Admin Panel.");
+                } else {
+                    alert("❌ Incorrect passcode. Access denied.");
+                    return;
+                }
+            }
+
+            document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+
+            document.getElementById('view-' + viewName).classList.add('active');
+            btn.classList.add('active');
+
+            const titles = {
+                'chat': 'Student Assistant Workspace',
+                'admin': 'Institutional Admin Panel'
+            };
+            document.getElementById('top-title').innerText = titles[viewName];
+
+            if (viewName === 'admin') fetchDocuments();
+            if (viewName === 'chat') focusInputField();
+
+            document.getElementById("sidebar").classList.remove("open");
+        }
+
+        function switchAdminTab(tabName) {
+            document.getElementById('admin-sub-docs').style.display = tabName === 'docs' ? 'block' : 'none';
+            document.getElementById('admin-sub-gaps').style.display = tabName === 'gaps' ? 'block' : 'none';
+
+            document.getElementById('tab-btn-docs').classList.toggle('active', tabName === 'docs');
+            document.getElementById('tab-btn-gaps').classList.toggle('active', tabName === 'gaps');
+
+            if (tabName === 'docs') fetchDocuments();
+            if (tabName === 'gaps') fetchGaps();
+        }
+
+        async function loadChatHistory() {
+            try {
+                const res = await fetch(`/api/chat/history/${sessionId}`);
+                const data = await res.json();
+
+                if (data.history && data.history.length > 0) {
+                    const chatBox = document.getElementById("chat-box");
+                    chatBox.innerHTML = "";
+
+                    data.history.forEach(msg => {
+                        const rowClass = msg.role === 'user' ? 'user' : 'assistant';
+                        chatBox.innerHTML += `
+                            <div class="message-row ${rowClass}">
+                                <div class="bubble">${formatMarkdown(escapeHtml(msg.content))}</div>
+                            </div>
+                        `;
+                    });
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            } catch (err) {
+                console.error("No past transcript found.");
+            }
+        }
+
+        function quickPrompt(text) {
+            document.getElementById("user-input").value = text;
+            sendQuery();
+        }
+
+        async function startNewChat() {
+            sessionId = "session_" + Math.random().toString(36).substring(2, 9);
+            localStorage.setItem("insti_session_id", sessionId);
+            document.getElementById("session-id-display").innerText = "Session: " + sessionId;
+
+            document.getElementById("chat-box").innerHTML = `
+                <div class="hero-welcome" id="hero-welcome">
+                    <div class="hero-logo-badge">
+                        <i class="fa-solid fa-sparkles"></i>
+                    </div>
+                    <div class="hero-title">Hello, I'm InstiAssistant</div>
+                    <div class="hero-subtitle">Your official AI academic partner. Ask me about course syllabi, examination guidelines, grading schemes, or college rules.</div>
+
+                    <div class="prompt-chips">
+                        <div class="chip-card" onclick="quickPrompt('What are the key course subjects and topics?')">
+                            <i class="fa-solid fa-book-bookmark" style="color: #3b82f6;"></i> Course Subjects
+                        </div>
+                        <div class="chip-card" onclick="quickPrompt('What is the examination and evaluation policy?')">
+                            <i class="fa-solid fa-file-pen" style="color: #8b5cf6;"></i> Exam Policies
+                        </div>
+                        <div class="chip-card" onclick="quickPrompt('Summarize overall institutional rules.')">
+                            <i class="fa-solid fa-gavel" style="color: #10b981;"></i> College Rules
+                        </div>
+                    </div>
+                </div>
+            `;
+            focusInputField();
+        }
+
+        async function sendQuery() {
+            const input = document.getElementById("user-input");
+            const query = input.value.trim();
+            if (!query) return;
+
+            const chatBox = document.getElementById("chat-box");
+
+            const hero = document.getElementById("hero-welcome");
+            if (hero) hero.remove();
+
+            chatBox.innerHTML += `
+                <div class="message-row user">
+                    <div class="bubble">${escapeHtml(query)}</div>
+                </div>
+            `;
+            input.value = "";
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            const aiMsgId = "msg-" + Date.now();
+            chatBox.innerHTML += `
+                <div class="message-row assistant">
+                    <div class="bubble" id="${aiMsgId}">
+                        <i class="fa-solid fa-sparkles fa-spin" style="color: var(--primary);"></i> Searching institutional records...
+                    </div>
+                </div>
+            `;
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            try {
+                const res = await fetch("/api/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ query: query, session_id: sessionId })
+                });
+
+                const data = await res.json();
+                const aiBubble = document.getElementById(aiMsgId);
+                aiBubble.innerHTML = formatMarkdown(data.answer);
+
+                if (data.sources && data.sources.length > 0) {
+                    const drawerId = "ref-" + Date.now();
+                    let refHtml = `
+                        <button class="ref-toggle-btn" onclick="toggleRef('${drawerId}')">
+                            <i class="fa-solid fa-folder-open"></i> View References (${data.sources.length})
+                        </button>
+                        <div class="ref-drawer" id="${drawerId}">
+                    `;
+
+                    data.sources.forEach(src => {
+                        refHtml += `
+                            <div class="ref-item">
+                                <strong>📄 ${escapeHtml(src.file)}</strong> (Page ${src.page})<br>
+                                <span style="font-size:0.8rem; color: var(--text-muted);">"${escapeHtml(src.snippet)}"</span>
+                            </div>
+                        `;
+                    });
+
+                    refHtml += `</div>`;
+                    aiBubble.parentElement.innerHTML += refHtml;
+                }
+
+            } catch (err) {
+                document.getElementById(aiMsgId).innerText = "Error connecting to backend server.";
+            }
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function toggleRef(id) {
+            const drawer = document.getElementById(id);
+            drawer.style.display = drawer.style.display === "flex" ? "none" : "flex";
+        }
+
+        async function fetchDocuments() {
+            const res = await fetch("/api/admin/documents");
+            const data = await res.json();
+            const tbody = document.getElementById("doc-table-body");
+            tbody.innerHTML = "";
+
+            data.documents.forEach(doc => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td><strong>${escapeHtml(doc.filename)}</strong></td>
+                        <td>${doc.upload_date}</td>
+                        <td>${doc.size_kb} KB</td>
+                        <td>${doc.chunks}</td>
+                        <td>
+                            <button class="btn-action btn-view" onclick="openPdfModal('${escapeHtml(doc.filename)}')"><i class="fa-solid fa-eye"></i> View</button>
+                            <button class="btn-action btn-delete" onclick="deleteDoc('${escapeHtml(doc.filename)}')"><i class="fa-solid fa-trash"></i> Delete</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        async function uploadFile() {
+            const input = document.getElementById("file-upload");
+            if (!input.files[0]) return alert("Please select a PDF document to upload.");
+
+            const formData = new FormData();
+            formData.append("file", input.files[0]);
+
+            alert("Uploading and indexing vectors into Qdrant Cloud...");
+            const res = await fetch("/api/admin/upload", { method: "POST", body: formData });
+            if (res.ok) {
+                alert("File indexed successfully!");
+                input.value = "";
+                fetchDocuments();
+            } else {
+                alert("Upload failed.");
+            }
+        }
+
+        async function deleteDoc(filename) {
+            if (!confirm(`Delete ${filename}?`)) return;
+            await fetch(`/api/admin/documents/${filename}`, { method: "DELETE" });
+            fetchDocuments();
+        }
+
+        function openPdfModal(filename) {
+            document.getElementById("modal-filename").innerText = filename;
+            document.getElementById("pdf-frame").src = `/api/admin/documents/view/${filename}`;
+            document.getElementById("pdf-modal").style.display = "flex";
+        }
+
+        function closeModal() {
+            document.getElementById("pdf-modal").style.display = "none";
+            document.getElementById("pdf-frame").src = "";
+        }
+
+        async function fetchGaps() {
+            const res = await fetch("/api/admin/gaps");
+            const data = await res.json();
+            const tbody = document.getElementById("gaps-table-body");
+            tbody.innerHTML = "";
+
+            data.gaps.forEach(gap => {
+                const statusBadge = gap.status === 'Resolved'
+                    ? `<span style="color:var(--success); font-weight:700;"><i class="fa-solid fa-check"></i> Resolved</span>`
+                    : `<span style="color:var(--danger); font-weight:700;"><i class="fa-solid fa-clock"></i> Unresolved</span>`;
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${gap.id}</td>
+                        <td><strong>${escapeHtml(gap.question)}</strong></td>
+                        <td>${gap.timestamp}</td>
+                        <td>${statusBadge}</td>
+                        <td>
+                            ${gap.status === 'Unresolved' ? `<button class="btn-action btn-resolve" onclick="resolveGap(${gap.id})">Mark Resolved</button>` : '-'}
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        async function resolveGap(gapId) {
+            await fetch(`/api/admin/gaps/${gapId}/resolve`, { method: "POST" });
+            fetchGaps();
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function formatMarkdown(text) {
+            return text
+                .replace(/^## (.*$)/gim, '<strong style="font-size:1.1rem; color:#f8fafc;">$1</strong>')
+                .replace(/^### (.*$)/gim, '<strong style="color:#f8fafc;">$1</strong>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong style="color:#f8fafc;">$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\n/g, '<br>');
+        }
+    </script>
+</body>
+</html>
