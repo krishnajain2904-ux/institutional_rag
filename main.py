@@ -3,17 +3,16 @@ import shutil
 import time
 import threading
 from datetime import datetime
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from rag_engine import (
     query_rag_system,
     index_single_file,
-    load_document_by_extension,
     DOC_FOLDER
 )
 
@@ -22,7 +21,6 @@ ALLOWED_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".webp", ".bmp"
 }
 
-CHAT_SESSIONS = {}
 KNOWLEDGE_GAPS = []
 
 app = FastAPI(
@@ -46,6 +44,46 @@ if os.path.exists(STATIC_FOLDER):
 class QueryRequest(BaseModel):
     query: str
     session_id: str = "session_default"
+
+
+def extract_preview_text(file_path: str, max_chars: int = 3000) -> str:
+    """Fast, lightweight text extractor specifically optimized for instant previews."""
+    ext = os.path.splitext(file_path)[1].lower()
+    try:
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            reader = PdfReader(file_path)
+            extracted = []
+            total_len = 0
+            for page in reader.pages[:10]:  # Only inspect up to first 10 pages
+                text = page.extract_text() or ""
+                if text.strip():
+                    extracted.append(text)
+                    total_len += len(text)
+                if total_len >= max_chars:
+                    break
+            return "\n\n".join(extracted)[:max_chars] if extracted else "No extractable text found in this PDF."
+
+        elif ext in [".docx", ".doc"]:
+            import docx
+            doc_obj = docx.Document(file_path)
+            text_list = []
+            total_len = 0
+            for p in doc_obj.paragraphs:
+                if p.text.strip():
+                    text_list.append(p.text)
+                    total_len += len(p.text)
+                    if total_len >= max_chars:
+                        break
+            return "\n\n".join(text_list)[:max_chars] if text_list else "No text found."
+
+        elif ext in [".txt", ".md", ".csv"]:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read(max_chars)
+        else:
+            return f"Preview not supported for '{ext}' files."
+    except Exception as e:
+        return f"Error reading preview: {e}"
 
 
 @app.get("/")
@@ -152,16 +190,12 @@ async def list_documents():
 async def preview_document(filename: str):
     file_path = os.path.join(DOC_FOLDER, filename)
     if os.path.exists(file_path):
-        try:
-            docs = load_document_by_extension(file_path)
-            full_text = "\n\n".join([d.page_content for d in docs])
-            return {
-                "filename": filename,
-                "preview_content": full_text[:4000] if full_text else "No text extracted.",
-                "source": "Local File"
-            }
-        except Exception as e:
-            return {"filename": filename, "preview_content": f"Preview error: {e}"}
+        preview_content = await run_in_threadpool(extract_preview_text, file_path)
+        return {
+            "filename": filename,
+            "preview_content": preview_content,
+            "source": "Local File"
+        }
 
     raise HTTPException(status_code=404, detail="File content not found.")
 
