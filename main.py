@@ -1,29 +1,45 @@
 import os
 import shutil
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from apscheduler.schedulers.background import BackgroundScheduler
 
-from rag_engine import (
-    index_single_pdf,
-    answer_query,
-    get_all_documents,
-    delete_document,
-    get_knowledge_gaps,
-    resolve_gap,
-    get_session_history_list,
-    DOC_FOLDER
-)
+from rag_engine import query_rag_system, index_single_file, DOC_FOLDER
+from auto_crawler import check_and_sync_college_docs
 
-app = FastAPI(
-    title="Institutional Knowledge Assistant",
-    description="Backend API for RAG-based Institutional Knowledge Base",
-    version="2.5.0"
-)
+# Supported file formats
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".pptx", ".ppt",
+    ".png", ".jpg", ".jpeg", ".webp", ".bmp"
+}
 
-# CORS setup
+# ----------------- BACKGROUND SCHEDULER -----------------
+scheduler = BackgroundScheduler()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Run crawler on boot and schedule every 6 hours
+    print("🚀 [Startup] Triggering initial college portal crawler sync...")
+    try:
+        check_and_sync_college_docs()
+    except Exception as e:
+        print(f"⚠️ Initial crawler sync skipped: {e}")
+
+    scheduler.add_job(check_and_sync_college_docs, "interval", hours=6)
+    scheduler.start()
+    yield
+    # Shutdown
+    scheduler.shutdown()
+
+
+app = FastAPI(title="SNJB Institutional RAG AI", lifespan=lifespan)
+
+# CORS Setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,100 +48,92 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-os.makedirs(DOC_FOLDER, exist_ok=True)
-os.makedirs("static", exist_ok=True)
+# Serve Static UI Files
+STATIC_FOLDER = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
+if os.path.exists(STATIC_FOLDER):
+    app.mount("/static", StaticFiles(directory=STATIC_FOLDER), name="static")
 
 
+# ----------------- DATA MODELS -----------------
 class QueryRequest(BaseModel):
     query: str
-    session_id: str = "default_session"
 
 
-# ----------------- CHAT API ENDPOINTS -----------------
+# ----------------- API ENDPOINTS -----------------
+@app.get("/")
+async def serve_frontend():
+    """Serves the main frontend index.html."""
+    index_path = os.path.join(STATIC_FOLDER, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return JSONResponse({"status": "running", "message": "SNJB Institutional RAG API is live."})
+
 
 @app.post("/api/chat")
 async def chat_endpoint(request: QueryRequest):
+    """Processes student questions through the RAG pipeline."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-    answer, sources = answer_query(request.query, session_id=request.session_id)
-    return {
-        "answer": answer,
-        "sources": sources
-    }
+    answer = query_rag_system(request.query)
+    return {"query": request.query, "answer": answer}
 
 
-@app.get("/api/chat/history/{session_id}")
-async def fetch_chat_history(session_id: str):
-    history = get_session_history_list(session_id)
-    return {"history": history}
-
-
-# ----------------- ADMIN API ENDPOINTS -----------------
-
-@app.post("/api/admin/upload")
+@app.post("/admin/upload")
 async def upload_document(file: UploadFile = File(...)):
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+    """Uploads and indexes PDFs, Word docs, Slides, CSVs, and Images (OCR)."""
+    ext = os.path.splitext(file.filename)[1].lower()
 
-    file_path = os.path.join(DOC_FOLDER, file.filename)
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format '{ext}'. Allowed extensions: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    local_path = os.path.join(DOC_FOLDER, file.filename)
 
     try:
-        chunk_count = index_single_pdf(file_path, file.filename)
+        # Save file to local folder
+        with open(local_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Index into Qdrant Cloud
+        chunk_count = index_single_file(local_path, file.filename)
+
         return {
-            "message": f"Successfully indexed '{file.filename}'",
+            "status": "success",
             "filename": file.filename,
-            "chunks": chunk_count
+            "chunks_indexed": chunk_count,
+            "message": f"Successfully indexed '{file.filename}' across {chunk_count} chunk(s)."
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to index PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
 
-@app.get("/api/admin/documents")
+@app.get("/admin/documents")
 async def list_documents():
-    docs = get_all_documents()
-    return {"documents": docs}
+    """Lists all local documents currently cached."""
+    files = []
+    if os.path.exists(DOC_FOLDER):
+        for f in os.listdir(DOC_FOLDER):
+            if not f.endswith(".sha256"):
+                files.append(f)
+    return {"documents": files}
 
 
-@app.get("/api/admin/documents/view/{filename}")
-async def view_document(filename: str):
+@app.delete("/admin/documents/{filename}")
+async def delete_document(filename: str):
+    """Deletes a local cached document and its hash file."""
     file_path = os.path.join(DOC_FOLDER, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Requested file not found.")
-    return FileResponse(file_path, media_type="application/pdf")
+    hash_path = file_path + ".sha256"
 
+    deleted = False
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        deleted = True
+    if os.path.exists(hash_path):
+        os.remove(hash_path)
 
-@app.delete("/api/admin/documents/{filename}")
-async def remove_document(filename: str):
-    try:
-        delete_document(filename)
-        return {"message": f"Successfully deleted '{filename}' record."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
-
-
-# ----------------- KNOWLEDGE GAP ENDPOINTS -----------------
-
-@app.get("/api/admin/gaps")
-async def fetch_knowledge_gaps():
-    gaps = get_knowledge_gaps()
-    return {"gaps": gaps}
-
-
-@app.post("/api/admin/gaps/{gap_id}/resolve")
-async def mark_gap_resolved(gap_id: int):
-    resolve_gap(gap_id)
-    return {"message": f"Gap #{gap_id} marked as resolved."}
-
-
-# Mount Static Files UI
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
-if __name__ == "__main__":
-    import uvicorn
-
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    if deleted:
+        return {"status": "success", "message": f"Deleted '{filename}' locally."}
+    raise HTTPException(status_code=404, detail="File not found.")
