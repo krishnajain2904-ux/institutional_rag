@@ -14,9 +14,9 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
-# Document Loaders & Splitters
+# Document Loaders & Splitters (Direct import to bypass heavy PyTorch imports)
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters.character import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, CSVLoader
 import docx
 
@@ -33,9 +33,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOC_FOLDER = os.path.join(BASE_DIR, "documents")
 os.makedirs(DOC_FOLDER, exist_ok=True)
 
+# Cache embedding model instance globally to reduce CPU load and execution time
+_GLOBAL_EMBEDDINGS = None
+
 
 def get_embeddings():
-    return FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+    global _GLOBAL_EMBEDDINGS
+    if _GLOBAL_EMBEDDINGS is None:
+        _GLOBAL_EMBEDDINGS = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+    return _GLOBAL_EMBEDDINGS
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -142,6 +148,7 @@ def index_single_file(file_path: str, filename: str) -> int:
         batch_size = 5
         total_chunks = len(chunks)
 
+        # Batch indexing into Qdrant to conserve RAM
         for i in range(0, total_chunks, batch_size):
             batch = chunks[i:i + batch_size]
             vector_store.add_documents(batch)
