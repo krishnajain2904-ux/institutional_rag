@@ -13,7 +13,6 @@ from langchain_community.document_loaders import (
     UnstructuredPowerPointLoader
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from langchain_groq import ChatGroq
@@ -26,37 +25,70 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
-# ----------------- INITIALIZE CLIENTS & LIGHTWEIGHT EMBEDDINGS -----------------
-# 1. Ultra-Lightweight ONNX Embedding Model (BAAI/bge-small-en-v1.5, 384 Dims, ~120MB RAM)
-embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+# ----------------- LAZY INITIALIZATION (OOM / EXIT 137 PREVENTION) -----------------
+_embeddings = None
+_qdrant_client = None
+_vector_store = None
+_llm = None
+_groq_native_client = None
 
-# 2. Qdrant Cloud Vector Store (Connecting to your active collection)
-qdrant_client = QdrantClient(
-    url=QDRANT_URL,
-    api_key=QDRANT_API_KEY,
-    timeout=60.0
-)
 
-vector_store = QdrantVectorStore(
-    client=qdrant_client,
-    collection_name="institutional_docs",  # Matches your live Qdrant Cloud collection
-    embedding=embeddings
-)
+def get_embeddings():
+    """Lazily loads FastEmbed embeddings (~120MB RAM vs PyTorch's 450MB+)."""
+    global _embeddings
+    if _embeddings is None:
+        from langchain_community.embeddings import FastEmbedEmbeddings
+        _embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+    return _embeddings
 
-# 3. Groq LLM (Text Generation)
-llm = ChatGroq(
-    groq_api_key=GROQ_API_KEY,
-    model_name="llama-3.3-70b-versatile",
-    temperature=0.2
-)
 
-# 4. Groq Native Client (Vision / OCR for Images)
-groq_native_client = Groq(api_key=GROQ_API_KEY)
+def get_qdrant_client():
+    """Lazily initializes the Qdrant Cloud client."""
+    global _qdrant_client
+    if _qdrant_client is None:
+        _qdrant_client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=60.0
+        )
+    return _qdrant_client
+
+
+def get_vector_store():
+    """Lazily connects to the Qdrant Cloud vector store."""
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = QdrantVectorStore(
+            client=get_qdrant_client(),
+            collection_name="institutional_docs",  # Matches active Qdrant Cloud collection
+            embedding=get_embeddings()
+        )
+    return _vector_store
+
+
+def get_llm():
+    """Lazily initializes the Groq LLM instance."""
+    global _llm
+    if _llm is None:
+        _llm = ChatGroq(
+            groq_api_key=GROQ_API_KEY,
+            model_name="llama-3.3-70b-versatile",
+            temperature=0.2
+        )
+    return _llm
+
+
+def get_groq_native_client():
+    """Lazily initializes the native Groq SDK client for Vision API."""
+    global _groq_native_client
+    if _groq_native_client is None:
+        _groq_native_client = Groq(api_key=GROQ_API_KEY)
+    return _groq_native_client
 
 
 # ----------------- MULTI-FORMAT LOADERS & OCR -----------------
 def extract_text_from_image(image_path: str) -> str:
-    """Uses Groq Llama 3.2 Vision model to extract text, schedules, and tables from images."""
+    """Uses Groq Llama 3.2 Vision model to transcribe text, tables, and notices from images."""
     try:
         with Image.open(image_path) as img:
             if img.mode != "RGB":
@@ -66,7 +98,8 @@ def extract_text_from_image(image_path: str) -> str:
             img.save(buffered, format="JPEG")
             base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-        response = groq_native_client.chat.completions.create(
+        client = get_groq_native_client()
+        response = client.chat.completions.create(
             model="llama-3.2-11b-vision-preview",
             messages=[
                 {
@@ -144,7 +177,8 @@ def index_single_file(file_path: str, filename: str) -> int:
             chunk.metadata["source"] = filename
             chunk.metadata["chunk_id"] = i
 
-        # 4. Upsert vectors into Qdrant Cloud
+        # 4. Upsert vectors into Qdrant Cloud via lazy vector store
+        vector_store = get_vector_store()
         vector_store.add_documents(chunks)
         print(f"✅ Successfully indexed '{filename}' ({len(chunks)} chunks).")
         return len(chunks)
@@ -163,6 +197,7 @@ def query_rag_system(user_query: str) -> str:
     """Retrieves top relevant document vectors and generates an answer using Llama-3."""
     try:
         # 1. Similarity Search against Qdrant
+        vector_store = get_vector_store()
         retriever = vector_store.as_retriever(search_kwargs={"k": 4})
         context_docs = retriever.invoke(user_query)
 
@@ -186,9 +221,10 @@ USER QUESTION:
 """
 
         # 3. LLM Generation via Groq
+        llm = get_llm()
         response = llm.invoke(system_prompt)
         return response.content
 
     except Exception as e:
         print(f"❌ RAG query error: {e}")
-        return "Sorry, I encountered an error while searching the document database. Please try again."s
+        return "Sorry, I encountered an error while searching the document database. Please try again."
