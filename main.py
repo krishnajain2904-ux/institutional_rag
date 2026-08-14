@@ -88,6 +88,11 @@ class QueryRequest(BaseModel):
     session_id: str = "session_default"
 
 
+class TextPasteRequest(BaseModel):
+    title: str
+    content: str
+
+
 @app.get("/")
 async def serve_frontend():
     index_path = os.path.join(STATIC_FOLDER, "index.html")
@@ -166,7 +171,7 @@ async def handle_file_upload(file: UploadFile, background_tasks: BackgroundTasks
         return {
             "status": "success",
             "filename": file.filename,
-            "message": f"File '{file.filename}' uploaded successfully!",
+            "message": f"File '{file.filename}' uploaded and saved successfully!",
             "document": {
                 "filename": file.filename,
                 "name": file.filename,
@@ -188,14 +193,73 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
     return await handle_file_upload(file, background_tasks)
 
 
-async def get_document_list():
-    formatted_docs = []
+@app.post("/api/admin/paste-text")
+@app.post("/admin/paste-text")
+async def paste_text_endpoint(request: TextPasteRequest, background_tasks: BackgroundTasks):
+    if not request.content.strip():
+        raise HTTPException(status_code=400, detail="Pasted text content cannot be empty.")
 
+    clean_title = request.title.strip().replace(" ", "_") or f"Notice_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if not clean_title.endswith(".txt"):
+        clean_title += ".txt"
+
+    local_path = os.path.join(DOC_FOLDER, clean_title)
+
+    try:
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(request.content)
+
+        background_tasks.add_task(index_single_file, local_path, clean_title)
+
+        file_size_bytes = os.path.getsize(local_path)
+        file_size_str = f"{round(file_size_bytes / 1024, 1)} KB"
+
+        return {
+            "status": "success",
+            "filename": clean_title,
+            "message": f"Text notice '{clean_title}' saved and indexed successfully!",
+            "document": {
+                "filename": clean_title,
+                "name": clean_title,
+                "title": clean_title,
+                "upload_date": datetime.now().strftime("%Y-%m-%d"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "size": file_size_str,
+                "chunks": "Indexing..."
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save text: {str(e)}")
+
+
+async def get_document_list():
+    docs_map = {}
+
+    # 1. Scan local documents folder so uploaded files show instantly
+    if os.path.exists(DOC_FOLDER):
+        for filename in os.listdir(DOC_FOLDER):
+            if not filename.endswith(".sha256"):
+                file_path = os.path.join(DOC_FOLDER, filename)
+                if os.path.isfile(file_path):
+                    b = os.path.getsize(file_path)
+                    size_str = f"{round(b / 1024, 1)} KB" if b < 1048576 else f"{round(b / 1048576, 2)} MB"
+                    docs_map[filename] = {
+                        "filename": filename,
+                        "name": filename,
+                        "title": filename,
+                        "upload_date": datetime.now().strftime("%Y-%m-%d"),
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "size": size_str,
+                        "chunks": "Local File",
+                        "status": "Ready"
+                    }
+
+    # 2. Merge with Qdrant vector store point counts
     try:
         client = get_qdrant_client()
         res, _ = client.scroll(
             collection_name="institutional_docs",
-            limit=100,
+            limit=200,
             with_payload=True,
             with_vectors=False
         )
@@ -207,42 +271,25 @@ async def get_document_list():
                 source_counts[src] = source_counts.get(src, 0) + 1
 
         for filename, chunk_count in source_counts.items():
-            local_file = os.path.join(DOC_FOLDER, filename)
-            size_str = "Cloud Sync"
-            if os.path.exists(local_file):
-                b = os.path.getsize(local_file)
-                size_str = f"{round(b / 1024, 1)} KB" if b < 1048576 else f"{round(b / 1048576, 2)} MB"
-
-            formatted_docs.append({
-                "filename": filename,
-                "name": filename,
-                "title": filename,
-                "upload_date": datetime.now().strftime("%Y-%m-%d"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "size": size_str,
-                "chunks": chunk_count,
-                "status": "Indexed"
-            })
+            if filename in docs_map:
+                docs_map[filename]["chunks"] = f"{chunk_count} Chunks"
+                docs_map[filename]["status"] = "Indexed"
+            else:
+                docs_map[filename] = {
+                    "filename": filename,
+                    "name": filename,
+                    "title": filename,
+                    "upload_date": datetime.now().strftime("%Y-%m-%d"),
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "size": "Cloud Sync",
+                    "chunks": f"{chunk_count} Chunks",
+                    "status": "Indexed"
+                }
 
     except Exception as e:
-        print(f"⚠️ Query error, loading local docs directory: {e}")
-        if os.path.exists(DOC_FOLDER):
-            for filename in os.listdir(DOC_FOLDER):
-                if not filename.endswith(".sha256"):
-                    file_path = os.path.join(DOC_FOLDER, filename)
-                    b = os.path.getsize(file_path)
-                    size_str = f"{round(b / 1024, 1)} KB" if b < 1048576 else f"{round(b / 1048576, 2)} MB"
-                    formatted_docs.append({
-                        "filename": filename,
-                        "name": filename,
-                        "title": filename,
-                        "upload_date": datetime.now().strftime("%Y-%m-%d"),
-                        "date": datetime.now().strftime("%Y-%m-%d"),
-                        "size": size_str,
-                        "chunks": "Local",
-                        "status": "Indexed"
-                    })
+        print(f"⚠️ Qdrant scroll warning: {e}")
 
+    formatted_docs = list(docs_map.values())
     return {"documents": formatted_docs, "files": formatted_docs, "data": formatted_docs}
 
 
