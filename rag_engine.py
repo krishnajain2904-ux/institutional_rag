@@ -23,7 +23,7 @@ import docx
 # Groq LLM Import
 from groq import Groq
 
-# Config
+# Configuration
 QDRANT_URL = os.getenv("QDRANT_URL", "")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -120,7 +120,6 @@ def load_document_by_extension(file_path: str) -> List[Document]:
 
 
 def index_single_file(file_path: str, filename: str) -> int:
-    """Loads, chunks, and indexes files into Qdrant Cloud in 5-chunk memory batches."""
     try:
         print(f"⏳ Loading '{filename}'...")
         raw_docs = load_document_by_extension(file_path)
@@ -161,7 +160,6 @@ def index_single_file(file_path: str, filename: str) -> int:
 
 
 def query_rag_system(user_query: str) -> str:
-    """Performs vector similarity search on Qdrant and generates an answer using Groq LLM safely."""
     if not user_query.strip():
         return "Please ask a valid question."
 
