@@ -2,17 +2,17 @@ import os
 import shutil
 import threading
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from rag_engine import query_rag_system, index_single_file, DOC_FOLDER
+from rag_engine import query_rag_system, index_single_file, DOC_FOLDER, get_qdrant_client
 from auto_crawler import check_and_sync_college_docs
 
-# Allowed multi-format document & image extensions
+# Allowed file extensions
 ALLOWED_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".pptx", ".ppt",
     ".png", ".jpg", ".jpeg", ".webp", ".bmp"
@@ -27,27 +27,25 @@ async def lifespan(app: FastAPI):
     """FastAPI Lifespan Manager: Boots the server instantly while running the crawler asynchronously."""
     print("🚀 [Startup] Launching initial college portal crawler sync in background thread...")
 
-    # 1. Run initial crawler in a separate daemon thread to avoid blocking server boot ($PORT)
+    # Run initial crawler in a separate daemon thread to avoid blocking server boot
     threading.Thread(target=check_and_sync_college_docs, daemon=True).start()
 
-    # 2. Schedule recurring crawler syncs every 6 hours
+    # Schedule recurring crawler syncs every 6 hours
     scheduler.add_job(check_and_sync_college_docs, "interval", hours=6)
     scheduler.start()
 
     yield
-
-    # Shutdown
     scheduler.shutdown()
 
 
-# Initialize FastAPI Application
+# Initialize FastAPI
 app = FastAPI(
     title="SNJB Institutional RAG AI",
     description="Multi-format RAG Assistant & Auto-Crawler for SNJB College of Engineering",
     lifespan=lifespan
 )
 
-# Configure CORS Middleware
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -56,7 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve Static Web UI Files
+# Serve Static UI Files
 STATIC_FOLDER = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
 if os.path.exists(STATIC_FOLDER):
     app.mount("/static", StaticFiles(directory=STATIC_FOLDER), name="static")
@@ -67,22 +65,19 @@ class QueryRequest(BaseModel):
     query: str
 
 
-# ----------------- API ROUTE ENDPOINTS -----------------
+# ----------------- FRONTEND & CHAT ENDPOINTS -----------------
 @app.get("/")
 async def serve_frontend():
-    """Serves the main frontend UI (index.html)."""
+    """Serves index.html."""
     index_path = os.path.join(STATIC_FOLDER, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
-    return JSONResponse({
-        "status": "online",
-        "message": "SNJB Institutional RAG API is running."
-    })
+    return JSONResponse({"status": "online", "message": "SNJB Institutional RAG API is running."})
 
 
 @app.post("/api/chat")
 async def chat_endpoint(request: QueryRequest):
-    """Processes student questions through the RAG pipeline."""
+    """Processes student questions through RAG."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
@@ -90,9 +85,14 @@ async def chat_endpoint(request: QueryRequest):
     return {"query": request.query, "answer": answer}
 
 
-@app.post("/admin/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """Uploads and indexes PDFs, Word documents, Slides, CSVs, and Images (OCR)."""
+@app.get("/api/chat/history/{session_id}")
+async def get_chat_history(session_id: str):
+    """Returns chat session history (prevents 404 in UI)."""
+    return {"session_id": session_id, "history": []}
+
+
+# ----------------- FILE UPLOAD ENDPOINTS -----------------
+async def handle_file_upload(file: UploadFile, background_tasks: BackgroundTasks):
     ext = os.path.splitext(file.filename)[1].lower()
 
     if ext not in ALLOWED_EXTENSIONS:
@@ -104,37 +104,67 @@ async def upload_document(file: UploadFile = File(...)):
     local_path = os.path.join(DOC_FOLDER, file.filename)
 
     try:
-        # Save file locally
         with open(local_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Generate embeddings and index into Qdrant Cloud
-        chunk_count = index_single_file(local_path, file.filename)
+        # Index in background to avoid freezing website
+        background_tasks.add_task(index_single_file, local_path, file.filename)
 
         return {
             "status": "success",
             "filename": file.filename,
-            "chunks_indexed": chunk_count,
-            "message": f"Successfully indexed '{file.filename}' across {chunk_count} chunk(s)."
+            "message": f"File '{file.filename}' uploaded successfully! Processing in background."
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process and index file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
 
+@app.post("/api/admin/upload")
+@app.post("/admin/upload")
+@app.post("/upload")
+async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """Handles uploads across all frontend route variations."""
+    return await handle_file_upload(file, background_tasks)
+
+
+# ----------------- DOCUMENT & GAP LISTING ENDPOINTS -----------------
+async def get_document_list():
+    """Fetches list of documents from Qdrant Cloud or local cache."""
+    try:
+        client = get_qdrant_client()
+        res, _ = client.scroll(
+            collection_name="institutional_docs",
+            limit=100,
+            with_payload=True,
+            with_vectors=False
+        )
+        sources = list(set(point.payload.get("source") for point in res if point.payload and "source" in point.payload))
+        return {"documents": sources}
+    except Exception:
+        files = []
+        if os.path.exists(DOC_FOLDER):
+            files = [f for f in os.listdir(DOC_FOLDER) if not f.endswith(".sha256")]
+        return {"documents": files}
+
+
+@app.get("/api/admin/documents")
 @app.get("/admin/documents")
 async def list_documents():
-    """Lists all local documents currently cached in the storage directory."""
-    files = []
-    if os.path.exists(DOC_FOLDER):
-        for f in os.listdir(DOC_FOLDER):
-            if not f.endswith(".sha256"):
-                files.append(f)
-    return {"documents": files}
+    """Returns document list for both /api/admin/documents and /admin/documents."""
+    return await get_document_list()
 
 
+@app.get("/api/admin/gaps")
+@app.get("/admin/gaps")
+async def list_gaps():
+    """Returns gaps list (prevents 404 in UI)."""
+    return {"gaps": []}
+
+
+@app.delete("/api/admin/documents/{filename}")
 @app.delete("/admin/documents/{filename}")
 async def delete_document(filename: str):
-    """Deletes a local cached document and its corresponding SHA-256 hash record."""
+    """Deletes cached document."""
     file_path = os.path.join(DOC_FOLDER, filename)
     hash_path = file_path + ".sha256"
 
@@ -146,5 +176,5 @@ async def delete_document(filename: str):
         os.remove(hash_path)
 
     if deleted:
-        return {"status": "success", "message": f"Deleted '{filename}' locally."}
+        return {"status": "success", "message": f"Deleted '{filename}'."}
     raise HTTPException(status_code=404, detail="File not found.")
