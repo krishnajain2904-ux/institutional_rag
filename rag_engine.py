@@ -1,230 +1,249 @@
 import os
-import base64
-from io import BytesIO
-from PIL import Image
-from groq import Groq
+import gc
+from typing import List, Dict, Any
+from dotenv import load_dotenv
 
-from langchain_core.documents import Document
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    Docx2txtLoader,
-    TextLoader,
-    CSVLoader,
-    UnstructuredPowerPointLoader
-)
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+# Suppress ONNX Runtime verbosity warnings in Render logs
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+
+load_dotenv()
+
+# --- FastEmbed & Qdrant Vector Store Imports ---
+from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-from langchain_groq import ChatGroq
+from qdrant_client.http.models import Distance, VectorParams
 
-# ----------------- PATH & ENVIRONMENT SETUP -----------------
-DOC_FOLDER = os.path.abspath(os.path.join(os.path.dirname(__file__), "documents"))
+# --- Text Splitting & Document Loaders ---
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import (
+    PyPDFLoader,
+    TextLoader,
+    UnstructuredWordDocumentLoader,
+    CSVLoader
+)
+
+# --- Groq LLM & Vision OCR Imports ---
+from groq import Groq
+
+# ----------------- CONFIGURATION & DIRECTORIES -----------------
+QDRANT_URL = os.getenv("QDRANT_URL", "")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+COLLECTION_NAME = "institutional_docs"
+
+# Base folder for local document cache
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOC_FOLDER = os.path.join(BASE_DIR, "documents")
 os.makedirs(DOC_FOLDER, exist_ok=True)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
-# ----------------- LAZY INITIALIZATION (OOM / EXIT 137 PREVENTION) -----------------
-_embeddings = None
-_qdrant_client = None
-_vector_store = None
-_llm = None
-_groq_native_client = None
-
-
+# ----------------- EMBEDDINGS & QDRANT CLIENT INITIALIZATION -----------------
 def get_embeddings():
-    """Lazily loads FastEmbed embeddings (~120MB RAM vs PyTorch's 450MB+)."""
-    global _embeddings
-    if _embeddings is None:
-        from langchain_community.embeddings import FastEmbedEmbeddings
-        _embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
-    return _embeddings
+    """Initializes FastEmbed BGE-Small embeddings."""
+    return FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
 
-def get_qdrant_client():
-    """Lazily initializes the Qdrant Cloud client."""
-    global _qdrant_client
-    if _qdrant_client is None:
-        _qdrant_client = QdrantClient(
-            url=QDRANT_URL,
-            api_key=QDRANT_API_KEY,
-            timeout=60.0
+def get_qdrant_client() -> QdrantClient:
+    """Creates a connection client for Qdrant Cloud or local Qdrant instance."""
+    if QDRANT_URL and QDRANT_API_KEY:
+        return QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=30.0)
+    return QdrantClient(location=":memory:")
+
+
+def get_vector_store() -> QdrantVectorStore:
+    """Ensures Qdrant collection exists and returns the QdrantVectorStore wrapper."""
+    client = get_qdrant_client()
+    embeddings = get_embeddings()
+
+    # Ensure collection exists
+    collections = [col.name for col in client.get_collections().collections]
+    if COLLECTION_NAME not in collections:
+        client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
         )
-    return _qdrant_client
+
+    return QdrantVectorStore(
+        client=client,
+        collection_name=COLLECTION_NAME,
+        embedding=embeddings
+    )
 
 
-def get_vector_store():
-    """Lazily connects to the Qdrant Cloud vector store."""
-    global _vector_store
-    if _vector_store is None:
-        _vector_store = QdrantVectorStore(
-            client=get_qdrant_client(),
-            collection_name="institutional_docs",  # Matches active Qdrant Cloud collection
-            embedding=get_embeddings()
-        )
-    return _vector_store
-
-
-def get_llm():
-    """Lazily initializes the Groq LLM instance."""
-    global _llm
-    if _llm is None:
-        _llm = ChatGroq(
-            groq_api_key=GROQ_API_KEY,
-            model_name="llama-3.3-70b-versatile",
-            temperature=0.2
-        )
-    return _llm
-
-
-def get_groq_native_client():
-    """Lazily initializes the native Groq SDK client for Vision API."""
-    global _groq_native_client
-    if _groq_native_client is None:
-        _groq_native_client = Groq(api_key=GROQ_API_KEY)
-    return _groq_native_client
-
-
-# ----------------- MULTI-FORMAT LOADERS & OCR -----------------
+# ----------------- MULTI-FORMAT DOCUMENT & OCR LOADERS -----------------
 def extract_text_from_image(image_path: str) -> str:
-    """Uses Groq Llama 3.2 Vision model to transcribe text, tables, and notices from images."""
+    """Uses Groq Vision OCR (llama-3.2-11b-vision-preview) to extract text from images."""
+    if not GROQ_API_KEY:
+        return "OCR unavailable: Missing GROQ_API_KEY."
+
     try:
-        with Image.open(image_path) as img:
-            if img.mode != "RGB":
-                img = img.convert("RGB")
+        import base64
+        with open(image_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
 
-            buffered = BytesIO()
-            img.save(buffered, format="JPEG")
-            base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-        client = get_groq_native_client()
-        response = client.chat.completions.create(
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        completion = groq_client.chat.completions.create(
             model="llama-3.2-11b-vision-preview",
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": "Extract all text, notices, dates, schedules, tables, and academic details from this image. Output clean and structured Markdown text."
-                        },
+                        {"type": "text",
+                         "text": "Extract all readable text, tables, notices, and details from this image verbatim."},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
+                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
                         }
                     ]
                 }
-            ]
+            ],
+            temperature=0.1,
+            max_tokens=1024
         )
-        return response.choices[0].message.content
+        return completion.choices[0].message.content or ""
     except Exception as e:
-        print(f"❌ Vision OCR error on {image_path}: {e}")
-        return f"[Image transcription failed: {e}]"
+        print(f"⚠️ Groq Vision OCR failed for '{image_path}': {e}")
+        return f"Failed to extract text from image: {e}"
 
 
-def load_document_by_extension(file_path: str):
-    """Dynamically routes file parsing based on format extension."""
+def load_document_by_extension(file_path: str) -> List[Document]:
+    """Loads documents by file type: PDF, DOCX, TXT, CSV, MD, or Images via OCR."""
     ext = os.path.splitext(file_path)[1].lower()
 
-    # Images (Groq Vision OCR)
-    if ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
-        text_content = extract_text_from_image(file_path)
-        return [Document(page_content=text_content, metadata={"source": os.path.basename(file_path)})]
-
-    # PDFs
-    elif ext == ".pdf":
-        return PyPDFLoader(file_path).load()
-
-    # Word Documents
+    if ext == ".pdf":
+        loader = PyPDFLoader(file_path)
+        return loader.load()
     elif ext in [".docx", ".doc"]:
-        return Docx2txtLoader(file_path).load()
-
-    # Plain Text & Markdown
-    elif ext in [".txt", ".md", ".log"]:
-        return TextLoader(file_path, encoding="utf-8").load()
-
-    # CSV Spreadsheets
+        try:
+            loader = UnstructuredWordDocumentLoader(file_path)
+            return loader.load()
+        except Exception:
+            # Fallback for plain docx reading
+            import docx
+            doc = docx.Document(file_path)
+            text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+            return [Document(page_content=text, metadata={"source": os.path.basename(file_path)})]
     elif ext == ".csv":
-        return CSVLoader(file_path).load()
-
-    # PowerPoint Slides
-    elif ext in [".pptx", ".ppt"]:
-        return UnstructuredPowerPointLoader(file_path).load()
-
+        loader = CSVLoader(file_path)
+        return loader.load()
+    elif ext in [".txt", ".md"]:
+        loader = TextLoader(file_path, encoding="utf-8")
+        return loader.load()
+    elif ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
+        ocr_text = extract_text_from_image(file_path)
+        return [Document(page_content=ocr_text, metadata={"source": os.path.basename(file_path)})]
     else:
-        raise ValueError(f"Unsupported file format: {ext}")
+        raise ValueError(f"Unsupported file extension: {ext}")
 
 
-# ----------------- VECTOR INDEXING PIPELINE -----------------
+# ----------------- MEMORY-SAFE BATCHED INDEXING -----------------
 def index_single_file(file_path: str, filename: str) -> int:
-    """Loads, chunks, and indexes any supported file or image into Qdrant Cloud."""
+    """
+    Loads, chunks, and indexes files into Qdrant Cloud in 5-chunk memory batches
+    to prevent RAM spikes/OOM 502 crashes on Render Free Tier.
+    """
     try:
-        # 1. Load document content
+        print(f"⏳ Loading and parsing '{filename}'...")
         raw_docs = load_document_by_extension(file_path)
 
-        # 2. Chunk text intelligently
+        # Chunk text
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200
         )
         chunks = text_splitter.split_documents(raw_docs)
 
-        # 3. Add explicit metadata tags
+        if not chunks:
+            print(f"⚠️ No text extracted from '{filename}'.")
+            return 0
+
+        # Inject source metadata into every chunk
         for i, chunk in enumerate(chunks):
             chunk.metadata["source"] = filename
             chunk.metadata["chunk_id"] = i
 
-        # 4. Upsert vectors into Qdrant Cloud via lazy vector store
+        # Upsert vectors in small batches of 5 (Prevents 502 Bad Gateway OOM restarts)
         vector_store = get_vector_store()
-        vector_store.add_documents(chunks)
-        print(f"✅ Successfully indexed '{filename}' ({len(chunks)} chunks).")
-        return len(chunks)
+        batch_size = 5
+        total_chunks = len(chunks)
+
+        for i in range(0, total_chunks, batch_size):
+            batch = chunks[i:i + batch_size]
+            vector_store.add_documents(batch)
+            print(f"   Indexed batch {min(i + batch_size, total_chunks)}/{total_chunks} chunks for '{filename}'...")
+
+        # Explicit memory cleanup
+        del raw_docs, chunks
+        gc.collect()
+
+        print(f"✅ Successfully indexed '{filename}' ({total_chunks} chunks total).")
+        return total_chunks
 
     except Exception as e:
         print(f"❌ Error indexing '{filename}': {e}")
+        gc.collect()
         raise e
 
 
-# Backward-compatibility alias for auto_crawler
-index_single_pdf = index_single_file
-
-
-# ----------------- RAG QUERY PROCESSING -----------------
+# ----------------- RAG QUERY PIPELINE -----------------
 def query_rag_system(user_query: str) -> str:
-    """Retrieves top relevant document vectors and generates an answer using Llama-3."""
+    """Performs vector similarity search on Qdrant and generates an answer using Groq LLM."""
+    if not user_query.strip():
+        return "Please ask a valid question."
+
     try:
-        # 1. Similarity Search against Qdrant
+        # 1. Similarity search on Qdrant Cloud
         vector_store = get_vector_store()
-        retriever = vector_store.as_retriever(search_kwargs={"k": 4})
-        context_docs = retriever.invoke(user_query)
+        docs = vector_store.similarity_search(user_query, k=4)
 
-        if not context_docs:
-            context_text = "No relevant documents found in the database."
-        else:
-            context_text = "\n\n---\n\n".join(
-                [f"Source: {doc.metadata.get('source', 'Unknown')}\n{doc.page_content}" for doc in context_docs]
-            )
+        if not docs:
+            return "This information is not available in the college records."
 
-        # 2. System Prompt
-        system_prompt = f"""You are the official AI Academic Assistant for SNJB College of Engineering.
-Answer the student's question accurately based ONLY on the provided document excerpts below.
-If the answer cannot be determined from the documents, politely state that the information is not available in the college records.
+        # 2. Build context block
+        context_parts = []
+        for d in docs:
+            src = d.metadata.get("source", "Institutional Document")
+            context_parts.append(f"--- Document Source: {src} ---\n{d.page_content}")
 
-DOCUMENT CONTEXT:
-{context_text}
+        context_text = "\n\n".join(context_parts)
 
-USER QUESTION:
-{user_query}
-"""
+        # 3. Generate response using Groq (llama-3.3-70b-versatile or llama3-8b-8192)
+        if not GROQ_API_KEY:
+            return f"Retrieved Context:\n{context_text}\n\n(LLM generation offline: Missing GROQ_API_KEY)"
 
-        # 3. LLM Generation via Groq
-        llm = get_llm()
-        response = llm.invoke(system_prompt)
-        return response.content
+        groq_client = Groq(api_key=GROQ_API_KEY)
+
+        system_prompt = (
+            "You are the official AI Academic Assistant for SNJB College of Engineering.\n"
+            "Answer student queries accurately using strictly the provided context.\n"
+            "If the context does not contain the answer, state clearly: "
+            "'This information is not available in the college records.'\n"
+            "Keep responses concise, polite, and well-formatted."
+        )
+
+        user_prompt = f"Context Information:\n{context_text}\n\nStudent Question: {user_query}"
+
+        completion = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2,
+            max_tokens=800
+        )
+
+        answer = completion.choices[0].message.content or "No answer generated."
+
+        # Clean up local memory
+        del docs
+        gc.collect()
+
+        return answer
 
     except Exception as e:
-        print(f"❌ RAG query error: {e}")
-        return "Sorry, I encountered an error while searching the document database. Please try again."
+        print(f"❌ Error in query_rag_system: {e}")
+        gc.collect()
+        return f"An error occurred while retrieving answers: {str(e)}"
