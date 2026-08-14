@@ -7,10 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-/* ==========================================================================
-   InstiAssistant — design tokens
-   ========================================================================== */
-
 :root{
   --ink:            #0A0D13;
   --panel:          #12161F;
@@ -54,9 +50,7 @@ body{
 }
 
 button{ font-family: inherit; cursor:pointer; }
-input{ font-family: inherit; }
-
-/* ---------------------------------- layout ------------------------------ */
+input, textarea{ font-family: inherit; }
 
 .app{
   display:grid;
@@ -163,7 +157,7 @@ input{ font-family: inherit; }
   gap:2px;
   width:100%;
   text-align:left;
-  padding: 8px 30px 8px 12px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   background:transparent;
   border:1px solid transparent;
@@ -171,10 +165,7 @@ input{ font-family: inherit; }
 }
 .history-item:hover{ background: var(--panel-raised); }
 .history-item.is-active{ background: var(--panel-raised); border-color: var(--hairline); color: var(--text-hi); }
-.history-item-title{
-  font-size:12.4px; font-weight:500;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
+.history-item-title{ font-size:12.4px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .history-item-time{ font-family: var(--font-mono); font-size:10px; color: var(--text-lo); }
 
 .sidebar-foot{ margin-top:12px; padding-top:16px; flex-shrink:0; }
@@ -187,8 +178,7 @@ input{ font-family: inherit; }
 .ledger-note-label{ font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-lo); }
 .ledger-note-value{ font-family: var(--font-mono); font-size:12.5px; color: var(--gold); }
 
-/* ------------------------------- views ---------------------------------- */
-
+/* Views */
 .view{ display:none; flex-direction:column; height:100vh; overflow:hidden; }
 .view.is-active{ display:flex; }
 
@@ -202,7 +192,6 @@ input{ font-family: inherit; }
 }
 .topbar-title h1{ font-family: var(--font-display); font-weight:600; font-size: 23px; letter-spacing:0.1px; }
 .topbar-title p{ color: var(--text-lo); font-size:12.8px; margin-top:4px; }
-
 .topbar-actions{ display:flex; align-items:center; gap:12px; }
 
 .session-chip{
@@ -245,15 +234,24 @@ input{ font-family: inherit; }
 }
 .btn-ghost:hover{ color: var(--text-hi); border-color:#37405a; }
 
+.btn-action-sm{
+  background: var(--panel-raised);
+  border: 1px solid var(--hairline);
+  color: var(--violet);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.btn-action-sm:hover{ background: var(--violet); color: #fff; }
+
 .link-btn{
   background:none; border:none; color: var(--violet); font-weight:600;
   text-decoration: underline; text-underline-offset:2px; padding:0; font-size:inherit;
 }
 
-/* ------------------------------- chat ------------------------------------ */
-
+/* Chat */
 .chat-wrap{ flex:1; display:flex; flex-direction:column; min-height:0; padding: 0 34px 26px; }
-
 .chat-scroll{
   flex:1;
   overflow-y:auto;
@@ -262,7 +260,6 @@ input{ font-family: inherit; }
   flex-direction:column;
   gap:18px;
 }
-
 .chat-row{ display:flex; gap:12px; max-width: 760px; }
 .chat-row.user{ align-self:flex-end; flex-direction:row-reverse; }
 
@@ -293,9 +290,7 @@ input{ font-family: inherit; }
   color: #F1EFFF;
 }
 
-.chat-suggestions{
-  display:flex; flex-wrap:wrap; gap:8px; padding: 6px 4px 16px;
-}
+.chat-suggestions{ display:flex; flex-wrap:wrap; gap:8px; padding: 6px 4px 16px; }
 .chip-suggest{
   background: var(--panel-raised);
   border:1px solid var(--hairline);
@@ -319,8 +314,7 @@ input{ font-family: inherit; }
 }
 .chat-input-bar input::placeholder{ color: var(--text-lo); }
 
-/* ------------------------------- admin ------------------------------------ */
-
+/* Admin */
 .admin-tabs{
   display:flex; gap:6px;
   padding: 0 34px; margin-top: 20px;
@@ -362,7 +356,7 @@ input{ font-family: inherit; }
 .dropzone{
   border: 1.5px dashed var(--hairline);
   border-radius: var(--radius-md);
-  padding: 30px 18px;
+  padding: 24px 18px;
   text-align:center;
   color: var(--text-mid);
   margin-bottom:16px;
@@ -408,8 +402,7 @@ input{ font-family: inherit; }
 .form-msg.error{ color: var(--danger); }
 .form-msg.success{ color: var(--success); }
 
-/* ------------------------------- modal ------------------------------------ */
-
+/* Modal */
 .modal-overlay{
   position:fixed; inset:0; background: rgba(5,6,10,0.72);
   backdrop-filter: blur(3px);
@@ -470,7 +463,17 @@ input{ font-family: inherit; }
 .grant-stamp.is-shown{
   opacity:1;
   transform:translate(-50%,-50%) rotate(-8deg) scale(1);
-  transition: opacity .18s ease, transform .18s cubic-bezier(.34,1.56,.64,1);
+}
+
+.preview-modal-box{
+  width: 80%; max-width: 760px; max-height: 80vh;
+  background: var(--panel); border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  padding: 24px; display:flex; flex-direction:column; gap:14px;
+}
+.preview-modal-body{
+  flex:1; overflow-y:auto; background: var(--panel-raised); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm); padding: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--text-hi);
+  white-space: pre-wrap;
 }
 </style>
 </head>
@@ -478,7 +481,7 @@ input{ font-family: inherit; }
 
 <div class="app">
 
-  <!-- ============ SIDEBAR ============ -->
+  <!-- SIDEBAR -->
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark">IA</div>
@@ -508,12 +511,12 @@ input{ font-family: inherit; }
     <div class="sidebar-foot">
       <div class="ledger-note">
         <span class="ledger-note-label">Index status</span>
-        <span class="ledger-note-value" id="docCountFoot">0 documents indexed</span>
+        <span class="ledger-note-value" id="docCountFoot">Loading records...</span>
       </div>
     </div>
   </aside>
 
-  <!-- ============ STUDENT VIEW ============ -->
+  <!-- STUDENT VIEW -->
   <main class="view is-active" id="view-student">
     <header class="topbar">
       <div class="topbar-title">
@@ -548,7 +551,7 @@ input{ font-family: inherit; }
     </section>
   </main>
 
-  <!-- ============ ADMIN VIEW ============ -->
+  <!-- ADMIN VIEW -->
   <main class="view" id="view-admin">
     <header class="topbar">
       <div class="topbar-title">
@@ -583,18 +586,16 @@ input{ font-family: inherit; }
     <!-- Document Management -->
     <section class="tab-panel is-active" id="tab-documents">
       <div class="card upload-card">
-        <div class="upload-card-head">
+        <div class="card-head-row">
           <h2>Upload new syllabus / circular</h2>
-          <span class="hint">PDF, DOCX or TXT · indexed automatically for retrieval</span>
+          <span class="hint">PDF, DOCX, TXT, CSV or Image · indexed automatically</span>
         </div>
         <div class="dropzone" id="dropzone">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 16V4M12 4 7 9M12 4l5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
           <p><strong>Drop a file here</strong> or <button type="button" class="link-btn" id="browseBtn">browse your device</button></p>
           <span class="dropzone-file" id="dropzoneFile">No file chosen</span>
           <input type="file" id="fileInput" hidden accept=".pdf,.doc,.docx,.txt,.csv,.png,.jpg,.jpeg,.webp">
         </div>
-        <button class="btn btn-primary" id="uploadBtn" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M12 4 7 9M12 4l5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+        <button class="btn btn-primary" id="uploadBtn" disabled style="width:100%; justify-content:center;">
           Upload &amp; index
         </button>
       </div>
@@ -611,11 +612,11 @@ input{ font-family: inherit; }
               <th>Upload date</th>
               <th>Size</th>
               <th>Chunks</th>
-              <th></th>
+              <th style="text-align:right;">Actions</th>
             </tr>
           </thead>
           <tbody id="docTableBody">
-            <tr class="empty-row"><td colspan="5">No documents indexed yet — upload a syllabus or circular to get started.</td></tr>
+            <tr class="empty-row"><td colspan="5">Loading files from documents folder...</td></tr>
           </tbody>
         </table>
       </div>
@@ -626,7 +627,7 @@ input{ font-family: inherit; }
       <div class="card">
         <div class="card-head-row">
           <h2>Unanswered student questions</h2>
-          <span class="hint">Questions the assistant couldn't confidently answer from indexed documents</span>
+          <span class="hint">Questions the assistant couldn't answer from indexed documents</span>
         </div>
         <ul class="gap-list" id="gapList">
           <li class="empty-row-card">No knowledge gaps recorded yet.</li>
@@ -644,15 +645,15 @@ input{ font-family: inherit; }
         <form id="passwordForm" class="password-form">
           <label>
             Current password
-            <input type="password" id="currentPassword" autocomplete="current-password" required>
+            <input type="password" id="currentPassword" required>
           </label>
           <label>
             New password
-            <input type="password" id="newPassword" autocomplete="new-password" required minlength="4">
+            <input type="password" id="newPassword" required minlength="4">
           </label>
           <label>
             Confirm new password
-            <input type="password" id="confirmPassword" autocomplete="new-password" required minlength="4">
+            <input type="password" id="confirmPassword" required minlength="4">
           </label>
           <div class="form-msg" id="passwordMsg"></div>
           <button type="submit" class="btn btn-primary">Update password</button>
@@ -663,27 +664,37 @@ input{ font-family: inherit; }
 
 </div>
 
-<!-- ============ PASSWORD GATE MODAL ============ -->
+<!-- PASSWORD MODAL -->
 <div class="modal-overlay" id="modalOverlay">
-  <div class="stamp-card" id="stampCard">
+  <div class="stamp-card">
     <div class="stamp-card-mark">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/></svg>
     </div>
     <h2>Restricted access</h2>
     <p>Enter the admin password to open the Institutional Admin Panel.</p>
     <form id="unlockForm">
-      <input type="password" id="unlockInput" placeholder="Password" autocomplete="current-password" autofocus>
+      <input type="password" id="unlockInput" placeholder="Password" required autofocus>
       <div class="form-msg" id="unlockMsg"></div>
       <div class="stamp-card-actions">
         <button type="button" class="btn btn-ghost" id="cancelUnlock">Cancel</button>
         <button type="submit" class="btn btn-primary">Unlock</button>
       </div>
     </form>
-    <div class="stamp-hint">Default password is <code>admin123</code> — change it from Admin Panel → Settings once inside.</div>
   </div>
 </div>
 
 <div class="grant-stamp" id="grantStamp">Access granted</div>
+
+<!-- PREVIEW MODAL -->
+<div class="modal-overlay" id="previewModal">
+  <div class="preview-modal-box">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3 id="previewTitle" style="font-family: var(--font-display);">Document Preview</h3>
+      <button class="btn btn-ghost" onclick="closePreviewModal()">Close</button>
+    </div>
+    <div class="preview-modal-body" id="previewBody">Loading preview content...</div>
+  </div>
+</div>
 
 <script>
 (() => {
@@ -696,16 +707,14 @@ input{ font-family: inherit; }
   const setPassword = (pw) => localStorage.setItem(PASSWORD_KEY, pw);
 
   let adminUnlocked = false;
+  let currentSessionId = "";
 
-  function makeSessionId(){
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let s = "";
-    for(let i=0;i<8;i++) s += chars[Math.floor(Math.random()*chars.length)];
-    return "session_" + s;
+  function generateSessionId(){
+    currentSessionId = "session_" + Math.random().toString(36).substring(2, 10);
+    document.getElementById("sessionId").textContent = currentSessionId;
+    document.getElementById("sessionIdAdmin").textContent = currentSessionId;
   }
-  const sessionId = makeSessionId();
-  document.getElementById("sessionId").textContent = sessionId;
-  document.getElementById("sessionIdAdmin").textContent = sessionId;
+  generateSessionId();
 
   const navStudent = document.getElementById("navStudent");
   const navAdmin   = document.getElementById("navAdmin");
@@ -746,7 +755,6 @@ input{ font-family: inherit; }
   function closeModal(){ modalOverlay.classList.remove("is-open"); }
 
   document.getElementById("cancelUnlock").addEventListener("click", closeModal);
-  modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeModal(); });
 
   unlockForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -757,14 +765,11 @@ input{ font-family: inherit; }
       grantStamp.classList.add("is-shown");
       setTimeout(() => grantStamp.classList.remove("is-shown"), 1100);
     } else {
-      unlockMsg.textContent = "Incorrect password. Try again.";
-      unlockMsg.className = "form-msg error";
-      unlockInput.value = "";
-      unlockInput.focus();
+      unlockMsg.textContent = "Incorrect password."; unlockMsg.className = "form-msg error";
     }
   });
 
-  /* PASSWORD UPDATE */
+  /* PASSWORD FORM */
   document.getElementById("passwordForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const curr = document.getElementById("currentPassword").value;
@@ -772,16 +777,16 @@ input{ font-family: inherit; }
     const conf = document.getElementById("confirmPassword").value;
     const msg  = document.getElementById("passwordMsg");
 
-    if (curr !== getPassword()) { msg.textContent = "Current password is incorrect."; msg.className = "form-msg error"; return; }
-    if (nxt.length < 4) { msg.textContent = "New password must be at least 4 characters."; msg.className = "form-msg error"; return; }
-    if (nxt !== conf) { msg.textContent = "New password and confirmation don't match."; msg.className = "form-msg error"; return; }
+    if (curr !== getPassword()) { msg.textContent = "Current password incorrect."; msg.className = "form-msg error"; return; }
+    if (nxt.length < 4) { msg.textContent = "Password must be at least 4 chars."; msg.className = "form-msg error"; return; }
+    if (nxt !== conf) { msg.textContent = "Passwords don't match."; msg.className = "form-msg error"; return; }
 
     setPassword(nxt);
-    msg.textContent = "Password updated."; msg.className = "form-msg success";
+    msg.textContent = "Password updated successfully."; msg.className = "form-msg success";
     e.target.reset();
   });
 
-  /* ADMIN TABS */
+  /* TABS */
   const tabBtns = document.querySelectorAll(".tab-btn");
   const tabPanels = {
     documents: document.getElementById("tab-documents"),
@@ -798,7 +803,7 @@ input{ font-family: inherit; }
     });
   });
 
-  /* DOCUMENT UPLOAD (REAL FASTAPI INTEGRATION) */
+  /* UPLOAD & DOCUMENTS TABLE */
   const dropzone   = document.getElementById("dropzone");
   const fileInput  = document.getElementById("fileInput");
   const browseBtn  = document.getElementById("browseBtn");
@@ -812,13 +817,7 @@ input{ font-family: inherit; }
   browseBtn.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => { if (fileInput.files[0]) setPendingFile(fileInput.files[0]); });
 
-  ["dragenter","dragover"].forEach(evt => dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add("is-drag"); }));
-  ["dragleave","drop"].forEach(evt => dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove("is-drag"); }));
-  dropzone.addEventListener("drop", (e) => { if (e.dataTransfer.files[0]) setPendingFile(e.dataTransfer.files[0]); });
-
-  function setPendingFile(file){
-    pendingFile = file; dropzoneFile.textContent = file.name; uploadBtn.disabled = false;
-  }
+  function setPendingFile(file){ pendingFile = file; dropzoneFile.textContent = file.name; uploadBtn.disabled = false; }
 
   uploadBtn.addEventListener("click", async () => {
     if (!pendingFile) return;
@@ -826,7 +825,7 @@ input{ font-family: inherit; }
     formData.append("file", pendingFile);
 
     uploadBtn.disabled = true;
-    uploadBtn.textContent = "Uploading...";
+    uploadBtn.textContent = "Indexing file...";
 
     try {
       const res = await fetch("/api/admin/upload", { method: "POST", body: formData });
@@ -861,13 +860,33 @@ input{ font-family: inherit; }
           <td class="mono-cell">${d.upload_date}</td>
           <td class="mono-cell">${d.size}</td>
           <td class="mono-cell">${d.chunks || d.status}</td>
-          <td></td>
+          <td style="text-align:right;">
+            <button class="btn-action-sm" onclick="previewDoc('${escapeHtml(d.filename)}')">👁️ Preview</button>
+          </td>
         </tr>
       `).join("");
     } catch (err) {
       docTableBody.innerHTML = `<tr class="empty-row"><td colspan="5">Failed to fetch document index.</td></tr>`;
     }
   }
+
+  window.previewDoc = async function(filename) {
+    const modal = document.getElementById("previewModal");
+    const body = document.getElementById("previewBody");
+    document.getElementById("previewTitle").innerText = `Previewing: ${filename}`;
+    body.innerText = "Loading preview content...";
+    modal.classList.add("is-open");
+
+    try {
+      const res = await fetch(`/api/admin/documents/${encodeURIComponent(filename)}/preview`);
+      const data = await res.json();
+      body.innerText = data.preview_content || "No extractable content found in this document.";
+    } catch (err) { body.innerText = "Error loading document preview."; }
+  };
+
+  window.closePreviewModal = function() {
+    document.getElementById("previewModal").classList.remove("is-open");
+  };
 
   async function fetchBackendGaps() {
     try {
@@ -892,11 +911,12 @@ input{ font-family: inherit; }
     }
   }
 
-  /* REAL CHAT FUNCTIONALITY */
+  /* CHAT & NEW CHAT BUTTON FIX */
   const chatScroll = document.getElementById("chatScroll");
   const chatForm   = document.getElementById("chatForm");
   const chatInput  = document.getElementById("chatInput");
   const chatSuggestions = document.getElementById("chatSuggestions");
+  const newChatBtn = document.getElementById("newChatBtn");
 
   const GREETING = "Hello! I'm your AI academic assistant. Ask me anything about courses, timetables, or notices — I'll pull answers from the documents your institution has indexed.";
 
@@ -912,7 +932,13 @@ input{ font-family: inherit; }
     chatScroll.scrollTop = chatScroll.scrollHeight;
   }
 
-  appendBubble("bot", GREETING);
+  function startNewChat() {
+    generateSessionId();
+    chatScroll.innerHTML = "";
+    appendBubble("bot", GREETING);
+  }
+
+  newChatBtn.addEventListener("click", startNewChat);
 
   async function sendQuestion(text) {
     const trimmed = text.trim();
@@ -928,7 +954,7 @@ input{ font-family: inherit; }
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: trimmed, session_id: sessionId })
+        body: JSON.stringify({ query: trimmed, session_id: currentSessionId })
       });
       const data = await res.json();
       document.getElementById(thinkId).querySelector(".bubble").innerText = data.answer;
@@ -948,6 +974,7 @@ input{ font-family: inherit; }
     const div = document.createElement("div"); div.textContent = s; return div.innerHTML;
   }
 
+  startNewChat();
   fetchBackendDocs();
 })();
 </script>

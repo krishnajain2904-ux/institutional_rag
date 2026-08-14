@@ -1,398 +1,151 @@
 import os
-import shutil
-import threading
-from datetime import datetime
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
-from apscheduler.schedulers.background import BackgroundScheduler
+import gc
+from typing import List
+from dotenv import load_dotenv
 
-from rag_engine import (
-    query_rag_system,
-    index_single_file,
-    load_document_by_extension,
-    DOC_FOLDER,
-    get_qdrant_client
-)
-from auto_crawler import check_and_sync_college_docs
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+load_dotenv()
 
-ALLOWED_EXTENSIONS = {
-    ".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".pptx", ".ppt",
-    ".png", ".jpg", ".jpeg", ".webp", ".bmp"
-}
+from langchain_community.embeddings import FastEmbedEmbeddings
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import Distance, VectorParams
 
-CHAT_SESSIONS = {}
-KNOWLEDGE_GAPS = [
-    {
-        "id": 1,
-        "query": "Hostel fee structure and mess charges for 2026",
-        "question": "Hostel fee structure and mess charges for 2026",
-        "topic": "Hostel & Fees",
-        "category": "Admissions / Fees",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M %p"),
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "status": "Pending Analysis",
-        "count": 1
-    },
-    {
-        "id": 2,
-        "query": "Bus route schedule and pickup points from Jalgaon",
-        "question": "Bus route schedule and pickup points from Jalgaon",
-        "topic": "Transportation",
-        "category": "Campus Logistics",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M %p"),
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "status": "Pending Analysis",
-        "count": 1
-    }
-]
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, CSVLoader
+import docx
 
-scheduler = BackgroundScheduler()
+from groq import Groq
 
+QDRANT_URL = os.getenv("QDRANT_URL", "")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+COLLECTION_NAME = "institutional_docs"
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("🚀 [Startup] Launching initial college portal crawler sync in background thread...")
-    threading.Thread(target=check_and_sync_college_docs, daemon=True).start()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOC_FOLDER = os.path.join(BASE_DIR, "documents")
+os.makedirs(DOC_FOLDER, exist_ok=True)
 
-    scheduler.add_job(check_and_sync_college_docs, "interval", hours=6)
-    scheduler.start()
+_GLOBAL_EMBEDDINGS = None
 
-    yield
-    scheduler.shutdown()
+def get_embeddings():
+    global _GLOBAL_EMBEDDINGS
+    if _GLOBAL_EMBEDDINGS is None:
+        _GLOBAL_EMBEDDINGS = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+    return _GLOBAL_EMBEDDINGS
 
+def get_qdrant_client() -> QdrantClient:
+    if QDRANT_URL and QDRANT_API_KEY:
+        return QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=15.0)
+    return QdrantClient(location=":memory:")
 
-app = FastAPI(
-    title="SNJB Institutional RAG AI",
-    description="Multi-format RAG Assistant & Auto-Crawler for SNJB College of Engineering",
-    lifespan=lifespan
-)
+def get_vector_store() -> QdrantVectorStore:
+    client = get_qdrant_client()
+    embeddings = get_embeddings()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-STATIC_FOLDER = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
-if os.path.exists(STATIC_FOLDER):
-    app.mount("/static", StaticFiles(directory=STATIC_FOLDER), name="static")
-
-
-class QueryRequest(BaseModel):
-    query: str
-    session_id: str = "session_default"
-
-
-class TextPasteRequest(BaseModel):
-    title: str
-    content: str
-
-
-@app.get("/")
-async def serve_frontend():
-    index_path = os.path.join(STATIC_FOLDER, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return JSONResponse({"status": "online", "message": "SNJB Institutional RAG API is live."})
-
-
-@app.post("/api/chat")
-async def chat_endpoint(request: QueryRequest):
-    if not request.query.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty.")
-
-    try:
-        answer = query_rag_system(request.query)
-        session_id = request.session_id
-
-        if session_id not in CHAT_SESSIONS:
-            CHAT_SESSIONS[session_id] = []
-
-        now_time = datetime.now().strftime("%I:%M %p")
-        CHAT_SESSIONS[session_id].append({"sender": "user", "text": request.query, "timestamp": now_time})
-        CHAT_SESSIONS[session_id].append({"sender": "bot", "text": answer, "timestamp": now_time})
-
-        if "not available in the college records" in answer.lower():
-            now_str = datetime.now().strftime("%Y-%m-%d %I:%M %p")
-            KNOWLEDGE_GAPS.append({
-                "id": len(KNOWLEDGE_GAPS) + 1,
-                "query": request.query,
-                "question": request.query,
-                "topic": "Unanswered Query",
-                "category": "General",
-                "timestamp": now_str,
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "status": "Unanswered",
-                "count": 1
-            })
-
-        return {"query": request.query, "answer": answer, "session_id": session_id}
-    except Exception as e:
-        print(f"❌ Error in /api/chat: {e}")
-        return JSONResponse(
-            status_code=200,
-            content={"query": request.query, "answer": "This information is not available in the college records.",
-                     "session_id": request.session_id}
+    collections = [col.name for col in client.get_collections().collections]
+    if COLLECTION_NAME not in collections:
+        client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
         )
 
+    return QdrantVectorStore(
+        client=client,
+        collection_name=COLLECTION_NAME,
+        embedding=embeddings
+    )
 
-@app.get("/api/chat/history")
-@app.get("/api/chat/history/{session_id}")
-async def get_chat_history(session_id: str = "session_default"):
-    history = CHAT_SESSIONS.get(session_id, [])
-    return {"session_id": session_id, "history": history, "messages": history}
+def load_document_by_extension(file_path: str) -> List[Document]:
+    ext = os.path.splitext(file_path)[1].lower()
+    fname = os.path.basename(file_path)
 
+    if ext == ".pdf":
+        loader = PyPDFLoader(file_path)
+        return loader.load()
+    elif ext in [".docx", ".doc"]:
+        doc_obj = docx.Document(file_path)
+        text = "\n".join([p.text for p in doc_obj.paragraphs if p.text.strip()])
+        return [Document(page_content=text, metadata={"source": fname})]
+    elif ext == ".csv":
+        loader = CSVLoader(file_path)
+        return loader.load()
+    elif ext in [".txt", ".md"]:
+        loader = TextLoader(file_path, encoding="utf-8")
+        return loader.load()
+    else:
+        raise ValueError(f"Unsupported format: {ext}")
 
-async def handle_file_upload(file: UploadFile, background_tasks: BackgroundTasks):
-    ext = os.path.splitext(file.filename)[1].lower()
-
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported format '{ext}'. Allowed extensions: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
-        )
-
-    local_path = os.path.join(DOC_FOLDER, file.filename)
-
+def index_single_file(file_path: str, filename: str) -> int:
     try:
-        with open(local_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        raw_docs = load_document_by_extension(file_path)
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
+        chunks = text_splitter.split_documents(raw_docs)
 
-        background_tasks.add_task(index_single_file, local_path, file.filename)
+        if not chunks:
+            return 0
 
-        file_size_bytes = os.path.getsize(local_path)
-        file_size_str = f"{round(file_size_bytes / 1024, 1)} KB" if file_size_bytes < 1048576 else f"{round(file_size_bytes / 1048576, 2)} MB"
+        for i, chunk in enumerate(chunks):
+            chunk.metadata["source"] = filename
+            chunk.metadata["chunk_id"] = i
 
-        return {
-            "status": "success",
-            "filename": file.filename,
-            "message": f"File '{file.filename}' uploaded and saved successfully!",
-            "document": {
-                "filename": file.filename,
-                "name": file.filename,
-                "title": file.filename,
-                "upload_date": datetime.now().strftime("%Y-%m-%d"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "size": file_size_str,
-                "chunks": "Indexing..."
-            }
-        }
+        vector_store = get_vector_store()
+        vector_store.add_documents(chunks)
+
+        del raw_docs, chunks
+        gc.collect()
+        return len(chunks)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+        print(f"❌ Indexing error for {filename}: {e}")
+        return 0
 
-
-@app.post("/api/admin/upload")
-@app.post("/admin/upload")
-@app.post("/upload")
-async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    return await handle_file_upload(file, background_tasks)
-
-
-@app.post("/api/admin/paste-text")
-@app.post("/admin/paste-text")
-async def paste_text_endpoint(request: TextPasteRequest, background_tasks: BackgroundTasks):
-    if not request.content.strip():
-        raise HTTPException(status_code=400, detail="Pasted text content cannot be empty.")
-
-    clean_title = request.title.strip().replace(" ", "_") or f"Notice_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    if not clean_title.endswith(".txt"):
-        clean_title += ".txt"
-
-    local_path = os.path.join(DOC_FOLDER, clean_title)
+def query_rag_system(user_query: str) -> str:
+    if not user_query.strip():
+        return "Please ask a clear question."
 
     try:
-        with open(local_path, "w", encoding="utf-8") as f:
-            f.write(request.content)
+        vector_store = get_vector_store()
+        docs = vector_store.similarity_search(user_query, k=4)
 
-        background_tasks.add_task(index_single_file, local_path, clean_title)
+        if not docs:
+            return "This information is not available in the college records."
 
-        file_size_bytes = os.path.getsize(local_path)
-        file_size_str = f"{round(file_size_bytes / 1024, 1)} KB"
+        context_parts = []
+        for d in docs:
+            src = d.metadata.get("source", "Document")
+            context_parts.append(f"[Source: {src}]\n{d.page_content}")
 
-        return {
-            "status": "success",
-            "filename": clean_title,
-            "message": f"Text notice '{clean_title}' saved and indexed successfully!",
-            "document": {
-                "filename": clean_title,
-                "name": clean_title,
-                "title": clean_title,
-                "upload_date": datetime.now().strftime("%Y-%m-%d"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "size": file_size_str,
-                "chunks": "Indexing..."
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save text: {str(e)}")
+        context_text = "\n\n".join(context_parts)
 
+        if not GROQ_API_KEY:
+            return "Groq API key is missing. Unable to formulate response."
 
-async def get_document_list():
-    docs_map = {}
+        groq_client = Groq(api_key=GROQ_API_KEY)
 
-    if os.path.exists(DOC_FOLDER):
-        for filename in os.listdir(DOC_FOLDER):
-            if not filename.endswith(".sha256"):
-                file_path = os.path.join(DOC_FOLDER, filename)
-                if os.path.isfile(file_path):
-                    b = os.path.getsize(file_path)
-                    size_str = f"{round(b / 1024, 1)} KB" if b < 1048576 else f"{round(b / 1048576, 2)} MB"
-                    docs_map[filename] = {
-                        "filename": filename,
-                        "name": filename,
-                        "title": filename,
-                        "upload_date": datetime.now().strftime("%Y-%m-%d"),
-                        "date": datetime.now().strftime("%Y-%m-%d"),
-                        "size": size_str,
-                        "chunks": "Local File",
-                        "status": "Ready"
-                    }
-
-    try:
-        client = get_qdrant_client()
-        res, _ = client.scroll(
-            collection_name="institutional_docs",
-            limit=200,
-            with_payload=True,
-            with_vectors=False
-        )
-
-        source_counts = {}
-        for point in res:
-            if point.payload and "source" in point.payload:
-                src = point.payload["source"]
-                source_counts[src] = source_counts.get(src, 0) + 1
-
-        for filename, chunk_count in source_counts.items():
-            if filename in docs_map:
-                docs_map[filename]["chunks"] = f"{chunk_count} Chunks"
-                docs_map[filename]["status"] = "Indexed"
-            else:
-                docs_map[filename] = {
-                    "filename": filename,
-                    "name": filename,
-                    "title": filename,
-                    "upload_date": datetime.now().strftime("%Y-%m-%d"),
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "size": "Cloud Sync",
-                    "chunks": f"{chunk_count} Chunks",
-                    "status": "Indexed"
+        completion = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an academic AI Assistant for the college. "
+                        "Answer the student's question concisely, accurately, and thoroughly using ONLY the provided context excerpts. "
+                        "If the answer cannot be found in the context, explicitly state: "
+                        "'This information is not available in the college records.'"
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"Context records:\n{context_text}\n\nStudent question: {user_query}"
                 }
-
-    except Exception as e:
-        print(f"⚠️ Qdrant scroll warning: {e}")
-
-    formatted_docs = list(docs_map.values())
-    return {"documents": formatted_docs, "files": formatted_docs, "data": formatted_docs}
-
-
-@app.get("/api/admin/documents")
-@app.get("/admin/documents")
-async def list_documents():
-    return await get_document_list()
-
-
-# --- FILE PREVIEW ENDPOINT ---
-@app.get("/api/admin/documents/{filename}/preview")
-async def preview_document(filename: str):
-    file_path = os.path.join(DOC_FOLDER, filename)
-
-    # 1. Check local file preview
-    if os.path.exists(file_path):
-        try:
-            docs = load_document_by_extension(file_path)
-            full_text = "\n\n".join([d.page_content for d in docs])
-            return {
-                "filename": filename,
-                "preview_content": full_text[:3000] if full_text else "No extractable text found in file.",
-                "total_length": len(full_text),
-                "source": "Local File"
-            }
-        except Exception as e:
-            return {"filename": filename, "preview_content": f"Failed to preview local file: {e}",
-                    "source": "Local Error"}
-
-    # 2. Fallback: Query Qdrant Cloud for indexed vector chunks
-    try:
-        client = get_qdrant_client()
-        res, _ = client.scroll(
-            collection_name="institutional_docs",
-            limit=10,
-            with_payload=True,
-            with_vectors=False
+            ],
+            temperature=0.2,
+            max_tokens=600
         )
-        matching_text = []
-        for point in res:
-            if point.payload and point.payload.get("source") == filename:
-                matching_text.append(point.payload.get("page_content", ""))
 
-        if matching_text:
-            combined = "\n\n--- Chunk Break ---\n\n".join(matching_text)
-            return {
-                "filename": filename,
-                "preview_content": combined,
-                "total_length": len(combined),
-                "source": "Qdrant Cloud Vector Store"
-            }
+        return completion.choices[0].message.content or "This information is not available in the college records."
+
     except Exception as e:
-        print(f"⚠️ Preview Qdrant error: {e}")
-
-    raise HTTPException(status_code=404, detail="File content not found for preview.")
-
-
-@app.get("/api/admin/gaps")
-@app.get("/admin/gaps")
-async def list_gaps():
-    return {
-        "gaps": KNOWLEDGE_GAPS,
-        "data": KNOWLEDGE_GAPS,
-        "items": KNOWLEDGE_GAPS
-    }
-
-
-@app.get("/api/health/qdrant")
-async def check_qdrant_status():
-    try:
-        client = get_qdrant_client()
-        info = client.get_collection(collection_name="institutional_docs")
-        points = getattr(info, "points_count", getattr(info, "vectors_count", 0))
-        return {
-            "status": "connected",
-            "collection": "institutional_docs",
-            "points_count": points,
-            "vectors_count": points
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@app.delete("/api/admin/documents/{filename}")
-@app.delete("/admin/documents/{filename}")
-async def delete_document(filename: str):
-    file_path = os.path.join(DOC_FOLDER, filename)
-    hash_path = file_path + ".sha256"
-
-    deleted = False
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        deleted = True
-    if os.path.exists(hash_path):
-        os.remove(hash_path)
-
-    if deleted:
-        return {"status": "success", "message": f"Deleted '{filename}' locally."}
-    raise HTTPException(status_code=404, detail="File not found.")
-
-
-@app.get("/{session_id}")
-async def catch_direct_session(session_id: str):
-    if session_id.startswith("session_"):
-        history = CHAT_SESSIONS.get(session_id, [])
-        return {"session_id": session_id, "history": history, "messages": history}
-    raise HTTPException(status_code=404, detail="Resource not found")
+        print(f"❌ Query error: {e}")
+        return "This information is not available in the college records."
