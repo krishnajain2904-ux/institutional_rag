@@ -1,6 +1,6 @@
 import os
 import gc
-from typing import List, Dict, Any
+from typing import List
 from dotenv import load_dotenv
 
 # Suppress ONNX Runtime verbosity warnings in Render logs
@@ -14,15 +14,11 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
 
-# --- Text Splitting & Document Loaders ---
+# --- Text Splitting & Lightweight Document Loaders ---
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    TextLoader,
-    UnstructuredWordDocumentLoader,
-    CSVLoader
-)
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, CSVLoader
+import docx
 
 # --- Groq LLM & Vision OCR Imports ---
 from groq import Groq
@@ -109,22 +105,16 @@ def extract_text_from_image(image_path: str) -> str:
 
 
 def load_document_by_extension(file_path: str) -> List[Document]:
-    """Loads documents by file type: PDF, DOCX, TXT, CSV, MD, or Images via OCR."""
+    """Loads documents by file type without requiring heavy C-libraries like unstructured."""
     ext = os.path.splitext(file_path)[1].lower()
 
     if ext == ".pdf":
         loader = PyPDFLoader(file_path)
         return loader.load()
     elif ext in [".docx", ".doc"]:
-        try:
-            loader = UnstructuredWordDocumentLoader(file_path)
-            return loader.load()
-        except Exception:
-            # Fallback for plain docx reading
-            import docx
-            doc = docx.Document(file_path)
-            text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-            return [Document(page_content=text, metadata={"source": os.path.basename(file_path)})]
+        doc_obj = docx.Document(file_path)
+        text = "\n".join([p.text for p in doc_obj.paragraphs if p.text.strip()])
+        return [Document(page_content=text, metadata={"source": os.path.basename(file_path)})]
     elif ext == ".csv":
         loader = CSVLoader(file_path)
         return loader.load()
@@ -142,7 +132,7 @@ def load_document_by_extension(file_path: str) -> List[Document]:
 def index_single_file(file_path: str, filename: str) -> int:
     """
     Loads, chunks, and indexes files into Qdrant Cloud in 5-chunk memory batches
-    to prevent RAM spikes/OOM 502 crashes on Render Free Tier.
+    to prevent RAM spikes/OOM crashes on Render Free Tier.
     """
     try:
         print(f"⏳ Loading and parsing '{filename}'...")
@@ -164,7 +154,7 @@ def index_single_file(file_path: str, filename: str) -> int:
             chunk.metadata["source"] = filename
             chunk.metadata["chunk_id"] = i
 
-        # Upsert vectors in small batches of 5 (Prevents 502 Bad Gateway OOM restarts)
+        # Upsert vectors in small batches of 5 (Prevents 502 OOM restarts)
         vector_store = get_vector_store()
         batch_size = 5
         total_chunks = len(chunks)
@@ -209,7 +199,7 @@ def query_rag_system(user_query: str) -> str:
 
         context_text = "\n\n".join(context_parts)
 
-        # 3. Generate response using Groq (llama-3.3-70b-versatile or llama3-8b-8192)
+        # 3. Generate response using Groq
         if not GROQ_API_KEY:
             return f"Retrieved Context:\n{context_text}\n\n(LLM generation offline: Missing GROQ_API_KEY)"
 
