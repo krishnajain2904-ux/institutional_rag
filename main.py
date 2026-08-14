@@ -267,11 +267,12 @@ async def check_qdrant_status():
     try:
         client = get_qdrant_client()
         info = client.get_collection(collection_name="institutional_docs")
+        points = getattr(info, "points_count", getattr(info, "vectors_count", 0))
         return {
             "status": "connected",
             "collection": "institutional_docs",
-            "vectors_count": info.vectors_count,
-            "points_count": info.points_count
+            "points_count": points,
+            "vectors_count": points
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
