@@ -13,7 +13,7 @@ from langchain_community.document_loaders import (
     UnstructuredPowerPointLoader
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from langchain_groq import ChatGroq
@@ -26,11 +26,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
-# ----------------- INITIALIZE CLIENTS & MODELS -----------------
-# 1. Embeddings Model (384 Dimensions)
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+# ----------------- INITIALIZE CLIENTS & LIGHTWEIGHT EMBEDDINGS -----------------
+# 1. Ultra-Lightweight ONNX Embedding Model (BAAI/bge-small-en-v1.5, 384 Dims, ~120MB RAM)
+embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
-# 2. Qdrant Cloud Vector Store
+# 2. Qdrant Cloud Vector Store (Connecting to your active collection)
 qdrant_client = QdrantClient(
     url=QDRANT_URL,
     api_key=QDRANT_API_KEY,
@@ -39,24 +39,24 @@ qdrant_client = QdrantClient(
 
 vector_store = QdrantVectorStore(
     client=qdrant_client,
-    collection_name="snjb_rag_docs",
+    collection_name="institutional_docs",  # Matches your live Qdrant Cloud collection
     embedding=embeddings
 )
 
-# 3. Groq LLM (Text Chat)
+# 3. Groq LLM (Text Generation)
 llm = ChatGroq(
     groq_api_key=GROQ_API_KEY,
     model_name="llama-3.3-70b-versatile",
     temperature=0.2
 )
 
-# 4. Groq Native Client (Vision / OCR)
+# 4. Groq Native Client (Vision / OCR for Images)
 groq_native_client = Groq(api_key=GROQ_API_KEY)
 
 
 # ----------------- MULTI-FORMAT LOADERS & OCR -----------------
 def extract_text_from_image(image_path: str) -> str:
-    """Uses Groq Llama 3.2 Vision model to transcribe text, tables, and notices from images."""
+    """Uses Groq Llama 3.2 Vision model to extract text, schedules, and tables from images."""
     try:
         with Image.open(image_path) as img:
             if img.mode != "RGB":
@@ -96,7 +96,7 @@ def load_document_by_extension(file_path: str):
     """Dynamically routes file parsing based on format extension."""
     ext = os.path.splitext(file_path)[1].lower()
 
-    # Images (OCR)
+    # Images (Groq Vision OCR)
     if ext in [".png", ".jpg", ".jpeg", ".webp", ".bmp"]:
         text_content = extract_text_from_image(file_path)
         return [Document(page_content=text_content, metadata={"source": os.path.basename(file_path)})]
@@ -127,7 +127,7 @@ def load_document_by_extension(file_path: str):
 
 # ----------------- VECTOR INDEXING PIPELINE -----------------
 def index_single_file(file_path: str, filename: str) -> int:
-    """Loads, chunks, and indexes any supported file/image into Qdrant Cloud."""
+    """Loads, chunks, and indexes any supported file or image into Qdrant Cloud."""
     try:
         # 1. Load document content
         raw_docs = load_document_by_extension(file_path)
@@ -162,7 +162,7 @@ index_single_pdf = index_single_file
 def query_rag_system(user_query: str) -> str:
     """Retrieves top relevant document vectors and generates an answer using Llama-3."""
     try:
-        # 1. Similarity Search
+        # 1. Similarity Search against Qdrant
         retriever = vector_store.as_retriever(search_kwargs={"k": 4})
         context_docs = retriever.invoke(user_query)
 
@@ -185,10 +185,10 @@ USER QUESTION:
 {user_query}
 """
 
-        # 3. LLM Generation
+        # 3. LLM Generation via Groq
         response = llm.invoke(system_prompt)
         return response.content
 
     except Exception as e:
         print(f"❌ RAG query error: {e}")
-        return "Sorry, I encountered an error while searching the document database. Please try again."
+        return "Sorry, I encountered an error while searching the document database. Please try again."s
