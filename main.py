@@ -13,6 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from rag_engine import (
     query_rag_system,
     index_single_file,
+    load_document_by_extension,
     DOC_FOLDER,
     get_qdrant_client
 )
@@ -235,7 +236,6 @@ async def paste_text_endpoint(request: TextPasteRequest, background_tasks: Backg
 async def get_document_list():
     docs_map = {}
 
-    # 1. Scan local documents folder so uploaded files show instantly
     if os.path.exists(DOC_FOLDER):
         for filename in os.listdir(DOC_FOLDER):
             if not filename.endswith(".sha256"):
@@ -254,7 +254,6 @@ async def get_document_list():
                         "status": "Ready"
                     }
 
-    # 2. Merge with Qdrant vector store point counts
     try:
         client = get_qdrant_client()
         res, _ = client.scroll(
@@ -297,6 +296,54 @@ async def get_document_list():
 @app.get("/admin/documents")
 async def list_documents():
     return await get_document_list()
+
+
+# --- FILE PREVIEW ENDPOINT ---
+@app.get("/api/admin/documents/{filename}/preview")
+async def preview_document(filename: str):
+    file_path = os.path.join(DOC_FOLDER, filename)
+
+    # 1. Check local file preview
+    if os.path.exists(file_path):
+        try:
+            docs = load_document_by_extension(file_path)
+            full_text = "\n\n".join([d.page_content for d in docs])
+            return {
+                "filename": filename,
+                "preview_content": full_text[:3000] if full_text else "No extractable text found in file.",
+                "total_length": len(full_text),
+                "source": "Local File"
+            }
+        except Exception as e:
+            return {"filename": filename, "preview_content": f"Failed to preview local file: {e}",
+                    "source": "Local Error"}
+
+    # 2. Fallback: Query Qdrant Cloud for indexed vector chunks
+    try:
+        client = get_qdrant_client()
+        res, _ = client.scroll(
+            collection_name="institutional_docs",
+            limit=10,
+            with_payload=True,
+            with_vectors=False
+        )
+        matching_text = []
+        for point in res:
+            if point.payload and point.payload.get("source") == filename:
+                matching_text.append(point.payload.get("page_content", ""))
+
+        if matching_text:
+            combined = "\n\n--- Chunk Break ---\n\n".join(matching_text)
+            return {
+                "filename": filename,
+                "preview_content": combined,
+                "total_length": len(combined),
+                "source": "Qdrant Cloud Vector Store"
+            }
+    except Exception as e:
+        print(f"⚠️ Preview Qdrant error: {e}")
+
+    raise HTTPException(status_code=404, detail="File content not found for preview.")
 
 
 @app.get("/api/admin/gaps")
